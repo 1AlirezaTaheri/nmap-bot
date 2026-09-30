@@ -1,0 +1,5 @@
+# secrets - never commit
+.env
+__pycache__/
+*.pyc
+bot.py.bak
