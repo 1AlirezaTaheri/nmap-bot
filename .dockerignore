@@ -1,0 +1,20 @@
+# Secrets and local state must never enter an image layer.
+.env
+.env.local
+
+# VCS / CI
+.git
+.github
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Not needed at runtime
+tests/
+bot.py.bak
+legacy/
+make_graphical_abstract.py
+graphical_abstract.png
+*.md
