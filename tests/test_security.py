@@ -23,6 +23,13 @@ def make_settings(ids=(100, 200)):
         scan_timeout_seconds=10,
         max_concurrent_scans=1,
         default_profile="service",
+        schedule_enabled=False,
+        schedule_interval_hours=6,
+        schedule_profile="service",
+        retention_days=30,
+        retention_max_scans_per_target=100,
+        export_max_scans=20,
+        rate_limit_seconds=30,
     )
 
 

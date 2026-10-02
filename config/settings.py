@@ -1,14 +1,15 @@
 """NetSentinel — application configuration.
 
 All runtime configuration is read from environment variables and validated
-here, in one place. Nothing else in the codebase should touch ``os.environ``
-directly — that keeps secrets and tunables in a single, auditable module.
+here, in one place. Nothing else in the codebase should touch
+``os.environ`` directly — that keeps secrets and tunables in a single,
+auditable module.
 """
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 class ConfigError(RuntimeError):
@@ -35,6 +36,15 @@ def _int(name: str, default: str) -> int:
         return int(raw)
     except ValueError as exc:
         raise ConfigError(f"{name} must be an integer, got {raw!r}") from exc
+
+
+def _bool(name: str, default: str) -> bool:
+    raw = _optional(name, default).lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    raise ConfigError(f"{name} must be a boolean, got {raw!r}")
 
 
 def _csv_ints(name: str) -> tuple[int, ...]:
@@ -64,6 +74,13 @@ def _csv_strs(name: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
+def _positive(name: str, default: str) -> int:
+    value = _int(name, default)
+    if value <= 0:
+        raise ConfigError(f"{name} must be greater than 0, got {value}")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     """Immutable snapshot of the runtime configuration."""
@@ -77,6 +94,21 @@ class Settings:
     max_concurrent_scans: int
     default_profile: str
 
+    # --- scheduled monitoring (V1) ---
+    schedule_enabled: bool
+    schedule_interval_hours: int
+    schedule_profile: str
+
+    # --- retention policy (V1) ---
+    retention_days: int
+    retention_max_scans_per_target: int
+
+    # --- export / report (V1) ---
+    export_max_scans: int
+
+    # --- hardening (V1) ---
+    rate_limit_seconds: int
+
     @classmethod
     def from_env(cls) -> "Settings":
         allowed = _csv_ints("ALLOWED_USER_IDS")
@@ -87,9 +119,13 @@ class Settings:
             raise ConfigError(
                 "ALLOWED_USER_IDS is empty. Refusing to start with an "
                 "open bot — set it to a comma-separated list of your "
-                "Telegram numeric user IDs, or delete the variable only "
-                "if you understand that startup will fail."
+                "Telegram numeric user IDs."
             )
+
+        retention_days = _int("RETENTION_DAYS", "30")
+        if retention_days < 1:
+            raise ConfigError("RETENTION_DAYS must be at least 1")
+
         return cls(
             telegram_bot_token=_require("TELEGRAM_BOT_TOKEN"),
             allowed_user_ids=allowed,
@@ -99,7 +135,20 @@ class Settings:
                 "postgresql+psycopg://netsentinel:netsentinel@db:5432/netsentinel",
             ),
             nmap_binary=_optional("NMAP_BINARY", "nmap"),
-            scan_timeout_seconds=_int("SCAN_TIMEOUT_SECONDS", "300"),
-            max_concurrent_scans=_int("MAX_CONCURRENT_SCANS", "2"),
+            scan_timeout_seconds=_positive("SCAN_TIMEOUT_SECONDS", "60"),
+            max_concurrent_scans=_positive("MAX_CONCURRENT_SCANS", "2"),
             default_profile=_optional("DEFAULT_PROFILE", "service"),
+
+            schedule_enabled=_bool("SCHEDULE_ENABLED", "false"),
+            schedule_interval_hours=_positive("SCHEDULE_INTERVAL_HOURS", "6"),
+            schedule_profile=_optional("SCHEDULE_PROFILE", "service"),
+
+            retention_days=retention_days,
+            retention_max_scans_per_target=_positive(
+                "RETENTION_MAX_SCANS_PER_TARGET", "100"
+            ),
+
+            export_max_scans=_positive("EXPORT_MAX_SCANS", "20"),
+
+            rate_limit_seconds=_int("RATE_LIMIT_SECONDS", "30"),
         )

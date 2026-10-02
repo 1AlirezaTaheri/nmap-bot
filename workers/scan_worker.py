@@ -5,6 +5,10 @@ coroutine, blocking the event loop for the whole scan. Here the queue
 decouples submission from execution, a semaphore caps how many nmap
 processes run at once, and the blocking call is pushed to a thread so the
 bot keeps answering ``/status`` while scans are in flight.
+
+Manual *and* scheduled scans share this single worker, so
+``MAX_CONCURRENT_SCANS`` bounds total load rather than each path
+separately.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from typing import Awaitable, Callable
 from core.change_detector import Change
 from core.profiles import ScanProfile
 from core.scan_manager import ScanManager, ScanOutcome
+from core.structured_logging import bind
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +38,8 @@ class ScanJob:
     target_name: str
     target_value: str
     profile: ScanProfile
+    # "manual" or "scheduled" — stored on the scan row for provenance.
+    source: str = "manual"
 
 
 @dataclass
@@ -42,6 +49,7 @@ class JobStatus:
     profile: str
     state: str  # queued | running | done | failed
     detail: str = ""
+    source: str = "manual"
 
 
 @dataclass
@@ -69,11 +77,21 @@ class ScanWorker:
         )
 
     async def stop(self) -> None:
+        """Cancel consumers and await them, leaving no pending tasks."""
         self._running = False
         for task in self._tasks:
             task.cancel()
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+
+    @property
+    def task_count(self) -> int:
+        return len(self._tasks)
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
 
     async def submit(self, job: ScanJob) -> None:
         async with self._jobs_lock:
@@ -82,6 +100,7 @@ class ScanWorker:
                 target_name=job.target_name,
                 profile=job.profile.name,
                 state="queued",
+                source=job.source,
             )
         await self._queue.put(job)
 
@@ -93,11 +112,24 @@ class ScanWorker:
 
     async def statuses(self) -> list[JobStatus]:
         async with self._jobs_lock:
-            return sorted(self._jobs.values(), key=lambda j: j.job_id, reverse=True)
+            return sorted(
+                self._jobs.values(), key=lambda j: j.job_id, reverse=True
+            )
+
+    async def queue_depth(self) -> int:
+        """Jobs waiting, not yet picked up by a consumer."""
+        return self._queue.qsize()
+
+    async def active_count(self) -> int:
+        """Jobs currently executing on a consumer slot."""
+        async with self._jobs_lock:
+            return sum(1 for j in self._jobs.values() if j.state == "running")
 
     async def pending_count(self) -> int:
         async with self._jobs_lock:
-            return sum(1 for j in self._jobs.values() if j.state in ("queued", "running"))
+            return sum(
+                1 for j in self._jobs.values() if j.state in ("queued", "running")
+            )
 
     async def _set_state(self, job_id: int, state: str, detail: str = "") -> None:
         async with self._jobs_lock:
@@ -113,30 +145,28 @@ class ScanWorker:
             except asyncio.CancelledError:
                 return
 
-            await self._set_state(job.job_id, "running")
-            outcome: ScanOutcome | None = None
-            error: str | None = None
-            try:
-                outcome = await asyncio.to_thread(
-                    self.scan_manager.execute,
-                    job.target_value,
-                    job.profile,
-                )
-                if outcome.duration_ms < 0:  # pragma: no cover - defensive
-                    error = "invalid outcome"
-            except Exception as exc:  # noqa: BLE001 — report, never crash worker
-                log.exception("Scan job %d failed", job.job_id)
-                error = str(exc)
-
-            await self._set_state(
-                job.job_id,
-                "failed" if error else "done",
-                error or "",
-            )
-
-            if self._on_complete is not None:
+            with bind("job"):
+                await self._set_state(job.job_id, "running")
+                outcome: ScanOutcome | None = None
+                error: str | None = None
                 try:
-                    await self._on_complete(job, outcome, error)
-                except Exception:  # pragma: no cover - Telegram failure
-                    log.exception("Completion notification failed")
-            self._queue.task_done()
+                    outcome = await asyncio.to_thread(
+                        self.scan_manager.execute,
+                        job.target_value,
+                        job.profile,
+                        source=job.source,
+                    )
+                except Exception as exc:  # noqa: BLE001 — report, never crash
+                    log.exception("Scan job %d failed", job.job_id)
+                    error = str(exc)
+
+                await self._set_state(
+                    job.job_id, "failed" if error else "done", error or ""
+                )
+
+                if self._on_complete is not None:
+                    try:
+                        await self._on_complete(job, outcome, error)
+                    except Exception:  # pragma: no cover - Telegram failure
+                        log.exception("Completion notification failed")
+                self._queue.task_done()

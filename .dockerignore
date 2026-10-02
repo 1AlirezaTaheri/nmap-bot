@@ -1,6 +1,7 @@
 # Secrets and local state must never enter an image layer.
 .env
-.env.local
+.env.*
+!.env.example
 
 # VCS / CI
 .git
@@ -11,10 +12,16 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
-# Not needed at runtime
+# Test artifacts
+.pytest_cache/
 tests/
+pytest.ini
+
+# Not needed at runtime
 bot.py.bak
 legacy/
 make_graphical_abstract.py
 graphical_abstract.png
+logs/
+*.log
 *.md

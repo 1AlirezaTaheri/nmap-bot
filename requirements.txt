@@ -1,6 +1,8 @@
 python-telegram-bot==21.6
 SQLAlchemy>=2.0,<3
 psycopg[binary]>=3.1,<4
+APScheduler>=3.10,<4
 
 # dev / test
 pytest>=8,<9
+pytest-asyncio>=0.23,<1

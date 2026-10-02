@@ -45,11 +45,19 @@ class ScanManager:
         self._db = database
         self._runner = runner
 
-    def execute(self, target_value: str, profile: ScanProfile) -> ScanOutcome:
+    def execute(
+        self,
+        target_value: str,
+        profile: ScanProfile,
+        source: str = "manual",
+    ) -> ScanOutcome:
         """Run one scan end-to-end and persist the result.
 
         The target row is resolved here so callers never manage ids —
         every scan gets a valid foreign key, including ad-hoc targets.
+
+        ``source`` records provenance ("manual" / "scheduled") on the scan
+        row so history can show which runs were automated.
         """
         # Commit the "running" row first, so a crash mid-scan still leaves
         # a durable record instead of losing the attempt entirely.
@@ -60,7 +68,7 @@ class ScanManager:
             target_id = target_row.id
             target_name = target_row.name
             scan_id = ScanRepository(session).create(
-                target_id, profile.name
+                target_id, profile.name, source=source
             ).id
 
         with self._db.session() as session:

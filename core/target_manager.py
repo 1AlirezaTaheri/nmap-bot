@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from database.database import Database
 from database.repository import RepositoryError, TargetRepository
-from security.authorization import TargetNotAllowedError, Authorizer
+from security.authorization import Authorizer, TargetNotAllowedError
 from security.targets import validate_target
 
 
@@ -36,17 +36,12 @@ class TargetRegistry:
             raise ValueError("Target name may not contain spaces.")
 
         # Validation AND scope restriction happen at registration time.
-        try:
-            validated = self._authz.assert_target_permitted(value)
-        except TargetNotAllowedError:
-            raise
+        validated = self._authz.assert_target_permitted(value)
 
         with self._db.session() as session:
-            repo = TargetRepository(session)
-            try:
-                row = repo.add(name=name, value=validated, group_name=group)
-            except RepositoryError:
-                raise
+            row = TargetRepository(session).add(
+                name=name, value=validated, group_name=group
+            )
             return TargetView(name=row.name, value=row.value, group=row.group_name)
 
     def get(self, name: str) -> TargetView | None:
@@ -57,8 +52,27 @@ class TargetRegistry:
             return TargetView(name=row.name, value=row.value, group=row.group_name)
 
     def delete(self, name: str) -> bool:
+        """Delete a target that has no scan history.
+
+        Raises RepositoryError when history exists — the block-by-default
+        policy. Never lets SQLAlchemy null out scans.target_id.
+        """
         with self._db.session() as session:
             return TargetRepository(session).delete(name.strip())
+
+    def history_count(self, name: str) -> dict[str, int]:
+        """Counts a purge would remove, for the confirmation prompt."""
+        with self._db.session() as session:
+            repo = TargetRepository(session)
+            row = repo.get_by_name(name.strip())
+            if row is None:
+                raise RepositoryError(f"No target named '{name}'.")
+            return repo.pending_counts(row.id)
+
+    def purge(self, name: str) -> dict[str, int]:
+        """Delete a target and all its history. Irreversible."""
+        with self._db.session() as session:
+            return TargetRepository(session).purge(name.strip())
 
     def list(self) -> list[TargetView]:
         with self._db.session() as session:

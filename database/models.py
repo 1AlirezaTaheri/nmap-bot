@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -40,20 +41,23 @@ class Target(Base):
     )
 
     scans: Mapped[list["Scan"]] = relationship(back_populates="target")
+    schedules: Mapped[list["Schedule"]] = relationship(
+        back_populates="target", cascade="all, delete-orphan"
+    )
 
 
 class Scan(Base):
     """One execution of a scan against a target."""
 
     __tablename__ = "scans"
-    __table_args__ = (
-        Index("ix_scans_target_profile", "target_id", "profile"),
-    )
+    __table_args__ = (Index("ix_scans_target_profile", "target_id", "profile"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     target_id: Mapped[int] = mapped_column(ForeignKey("targets.id"))
     profile: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(16), default="running")
+    # Which trigger produced this scan: manual, scheduled, or retention.
+    source: Mapped[str] = mapped_column(String(16), default="manual")
     started_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
@@ -140,6 +144,56 @@ class ChangeEvent(Base):
 
     scan: Mapped[Scan] = relationship(
         back_populates="changes", foreign_keys="[ChangeEvent.scan_id]"
+    )
+
+
+class Schedule(Base):
+    """A recurring scan for a target (V1).
+
+    ``enabled`` false means paused — a pause keeps the operator's
+    configuration instead of deleting it, so ``/schedule resume`` works
+    without re-specifying the interval.
+    """
+
+    __tablename__ = "schedules"
+    __table_args__ = (UniqueConstraint("target_id",),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    target_id: Mapped[int] = mapped_column(ForeignKey("targets.id"))
+    profile: Mapped[str] = mapped_column(String(32))
+    interval_hours: Mapped[int] = mapped_column(Integer)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    next_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+
+    target: Mapped[Target] = relationship(back_populates="schedules")
+
+
+class OperatorChat(Base):
+    """Where scheduled alerts are delivered (V1).
+
+    Populated by the first allowed user who runs ``/start``. Scheduled runs
+    have no originating chat, so they need a remembered destination.
+    """
+
+    __tablename__ = "operator_chats"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    chat_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer)
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
     )
 
 
