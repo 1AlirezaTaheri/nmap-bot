@@ -25,3 +25,10 @@ graphical_abstract.png
 logs/
 *.log
 *.md
+
+# Frontend build artefacts (the image builds its own)
+node_modules
+**/node_modules
+admin/frontend/dist
+*.tsbuildinfo
+npm-debug.log

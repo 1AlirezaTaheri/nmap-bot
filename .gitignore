@@ -21,3 +21,17 @@ venv/
 # local backups
 bot.py.bak
 legacy/
+
+# editor artifacts (nano/vim swap files can hold buffer contents)
+*.swp
+*.swo
+.*.sw[a-p]
+
+# frontend build artefacts (the admin image runs its own npm build)
+node_modules/
+admin/frontend/dist/
+*.tsbuildinfo
+npm-debug.log*
+
+# local environment overrides
+.env.local

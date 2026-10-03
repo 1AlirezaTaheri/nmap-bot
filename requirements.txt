@@ -7,7 +7,6 @@ APScheduler>=3.10,<4
 # --- admin panel ---
 fastapi>=0.110,<1
 uvicorn[standard]>=0.27,<1
-jinja2>=3.1,<4
 passlib[bcrypt]>=1.7,<2
 bcrypt>=4.1,<5
 PyJWT>=2.8,<3

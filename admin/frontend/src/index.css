@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+   Theme tokens.
+
+   The whole app reads these; Tailwind maps them to utility classes
+   (bg-bg, text-fg, border-border, bg-primary, ...). Switching themes is
+   therefore one attribute flip on <html>, not a re-render.
+   --------------------------------------------------------------------------- */
+
+:root,
+[data-theme='dark'] {
+  --bg: 2 6 23; /* #020617 */
+  --surface: 15 23 42; /* #0f172a */
+  --elevated: 30 41 59; /* #1e293b */
+  --border: 30 41 59; /* #1e293b */
+  --input: 30 41 59;
+  --fg: 241 245 249; /* #f1f5f9 */
+  --muted: 148 163 184; /* #94a3b8 */
+  --faint: 100 116 139;
+
+  --primary: 16 185 129; /* #10b981 */
+  --primary-fg: 2 6 23;
+  --primary-soft: 6 78 59;
+
+  --danger: 239 68 68; /* #ef4444 */
+  --danger-fg: 255 255 255;
+  --danger-soft: 127 29 29;
+
+  --warning: 245 158 11; /* #f59e0b */
+  --warning-soft: 120 53 15;
+
+  --info: 14 165 233; /* #0ea5e9 */
+  --info-soft: 12 74 110;
+}
+
+[data-theme='light'] {
+  --bg: 255 255 255; /* #ffffff */
+  --surface: 248 250 252; /* #f8fafc */
+  --elevated: 255 255 255;
+  --border: 226 232 240; /* #e2e8f0 */
+  --input: 226 232 240;
+  --fg: 15 23 42; /* #0f172a */
+  --muted: 100 116 139; /* #64748b */
+  --faint: 148 163 184;
+
+  --primary: 5 150 105; /* #059669 */
+  --primary-fg: 255 255 255;
+  --primary-soft: 209 250 229;
+
+  --danger: 220 38 38; /* #dc2626 */
+  --danger-fg: 255 255 255;
+  --danger-soft: 254 226 226;
+
+  --warning: 217 119 6;
+  --warning-soft: 254 243 199;
+
+  --info: 2 132 199;
+  --info-soft: 224 242 254;
+}
+
+* {
+  border-color: rgb(var(--border));
+}
+
+/* Colour transitions on theme flip, but never on first paint. */
+html.theme-transition,
+html.theme-transition *,
+html.theme-transition *::before,
+html.theme-transition *::after {
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    fill 150ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+body {
+  @apply bg-bg text-fg font-sans antialiased;
+  margin: 0;
+  min-height: 100vh;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-border;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-faint;
+}
+
+@layer components {
+  .card {
+    @apply rounded-lg border border-border bg-surface;
+  }
+
+  .input {
+    @apply w-full rounded-md border border-input bg-bg px-3 py-2 text-sm text-fg
+      outline-none transition-colors
+      placeholder:text-faint
+      focus:border-primary focus:ring-2 focus:ring-primary/25
+      disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .label {
+    @apply mb-1.5 block text-sm font-medium text-fg;
+  }
+
+  .hint {
+    @apply mt-1 text-xs text-muted;
+  }
+
+  .link {
+    @apply text-primary hover:underline;
+  }
+}
+
+/* Recharts injects its own focus outline on the SVG wrapper. */
+.recharts-wrapper:focus,
+.recharts-surface:focus {
+  outline: none;
+}

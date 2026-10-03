@@ -12,9 +12,9 @@ log = logging.getLogger(__name__)
 def create_app(settings=None):
     """Lazy re-export.
 
-    Imported on demand so that merely importing this package (for example
-    from a test that only wants the templates) does not drag in FastAPI,
-    Jinja2 and the whole route graph.
+    Imported on demand so that merely importing this package (for
+    example from a test that only wants the settings store) does not
+    drag in FastAPI and the whole route graph.
     """
     from admin.services.bootstrap import create_app as _create
 

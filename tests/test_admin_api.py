@@ -157,43 +157,90 @@ class TestAuth:
             assert resp.json()["total"] >= 1
 
 
-class TestPages:
-    def test_root_redirects_to_login(self, client):
-        with client:
-            assert client.get("/", follow_redirects=False).status_code in (302, 307)
+class TestSpaShell:
+    """The panel is a client-rendered SPA served from admin/frontend/dist.
 
-    def test_login_page_renders(self, client):
-        with client:
-            resp = client.get("/admin/login")
-            assert resp.status_code == 200
-            assert "NetSentinel" in resp.text
+    These tests build a throwaway dist directory and point the module
+    constants at it, so they pass whether or not npm has been run.
+    """
 
-    def test_anonymous_redirected_from_dashboard(self, client):
-        with client:
-            resp = client.get("/admin", follow_redirects=False)
-            assert resp.status_code in (302, 307)
+    def _mount(self, tmp_path, monkeypatch, build: bool):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
 
-    def test_dashboard_renders_when_authed(self, auth_client):
-        resp = auth_client.get("/admin")
+        from admin.services import bootstrap as bs
+
+        dist = tmp_path / "dist"
+        if build:
+            (dist / "assets").mkdir(parents=True)
+            (dist / "index.html").write_text(
+                '<!doctype html><html><body><div id="root"></div></body></html>',
+                encoding="utf-8",
+            )
+            (dist / "assets" / "app-abc123.js").write_text(
+                "console.log(1)", encoding="utf-8"
+            )
+        monkeypatch.setattr(bs, "FRONTEND_DIST", str(dist))
+        monkeypatch.setattr(bs, "SPA_INDEX", str(dist / "index.html"))
+
+        app = FastAPI()
+        bs._mount_spa(app)
+        return TestClient(app)
+
+    def test_assets_are_served_with_a_js_content_type(self, tmp_path, monkeypatch):
+        # Regression guard: if the catch-all were registered before the
+        # assets mount, the browser would get text/html and refuse the
+        # module, leaving a blank page with no error.
+        client = self._mount(tmp_path, monkeypatch, build=True)
+        resp = client.get("/admin/assets/app-abc123.js")
         assert resp.status_code == 200
-        assert "Dashboard" in resp.text
+        assert "javascript" in resp.headers.get("content-type", "")
+        assert resp.text == "console.log(1)"
 
-    def test_all_pages_render(self, auth_client):
-        for path in ("/admin", "/admin/users", "/admin/targets",
-                     "/admin/audit", "/admin/settings"):
-            resp = auth_client.get(path)
+    def test_unknown_routes_return_the_shell(self, tmp_path, monkeypatch):
+        client = self._mount(tmp_path, monkeypatch, build=True)
+        for path in ("/admin", "/admin/", "/admin/users", "/admin/audit?page=1"):
+            resp = client.get(path)
             assert resp.status_code == 200, path
+            assert 'id="root"' in resp.text
 
-    def test_pages_escape_html(self, auth_client):
-        """Auto-escaping must neutralise a hostile username in a table."""
-        auth_client.post(
-            "/api/users",
-            json={"telegram_user_id": 4242, "username": "<script>x</script>"},
-        )
-        resp = auth_client.get("/admin/users")
+    def test_shell_is_not_cached(self, tmp_path, monkeypatch):
+        client = self._mount(tmp_path, monkeypatch, build=True)
+        resp = client.get("/admin")
+        assert resp.headers.get("cache-control") == "no-store"
+
+    def test_missing_build_returns_actionable_503(self, tmp_path, monkeypatch):
+        # A missing npm build must not crash the container: the API stays
+        # up and /admin explains how to fix it.
+        client = self._mount(tmp_path, monkeypatch, build=False)
+        resp = client.get("/admin/users")
+        assert resp.status_code == 503
+        assert "npm run build" in resp.json()["detail"]
+
+    def test_module_constants_point_at_dist(self):
+        from admin.services import bootstrap as bs
+
+        assert bs.FRONTEND_DIST.endswith(os.path.join("admin", "frontend", "dist"))
+        assert bs.SPA_INDEX.endswith("index.html")
+
+
+class TestStatsSeriesApi:
+    def test_series_endpoint_returns_daily_buckets(self, auth_client):
+        resp = auth_client.get("/api/stats/series?days=3")
         assert resp.status_code == 200
-        assert "<script>x</script>" not in resp.text
-        assert "&lt;script&gt;" in resp.text
+        series = resp.json()["series"]
+        assert isinstance(series, list)
+        for point in series:
+            assert set(point) == {"date", "scans", "failed", "changes"}
+
+    def test_series_requires_auth(self, client):
+        assert client.get("/api/stats/series").status_code == 401
+
+    def test_series_clamps_absurd_windows(self, auth_client):
+        # An unbounded window would happily scan the whole scans table.
+        resp = auth_client.get("/api/stats/series?days=99999")
+        assert resp.status_code == 200
+        assert len(resp.json()["series"]) <= 365
 
 
 class TestUsersApi:

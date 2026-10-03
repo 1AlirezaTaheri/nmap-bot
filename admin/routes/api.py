@@ -680,6 +680,21 @@ async def get_stats(request: Request, days: int = 7,
         }
 
 
+@router.get("/stats/series")
+async def stats_series(request: Request, days: int = 7,
+                       principal=Depends(current_principal)):
+    """Daily scans + change events, without the rest of the dashboard.
+
+    The chart fetches this on its own so it can extend the window (30/90
+    days) without re-downloading every counter on the page.
+    """
+    del principal  # authentication only; the series is not per-user
+    days = max(1, min(days, 365))
+    context = ctx(request)
+    with context.database.session() as session:
+        return {"series": stats_service.daily_series(session, days=days)}
+
+
 @router.get("/health")
 async def health(request: Request):
     """Liveness probe. No auth: the container healthcheck uses it."""

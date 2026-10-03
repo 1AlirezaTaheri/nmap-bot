@@ -9,20 +9,25 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from admin.services import auth as auth_service
 from admin.services import users as user_service
 from admin.services.settings_store import SettingsStore, seed as seed_settings
-from admin.templates import TEMPLATE_ENV, templates_dir
 from config.settings import Settings
 from database.database import Database
 
 log = logging.getLogger(__name__)
 
 PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+# admin/ -- the parent of this package. The built SPA lives at
+# admin/frontend/dist, so resolve from the package root; joining onto
+# PACKAGE_DIR would yield admin/services/frontend/dist.
+ADMIN_DIR = os.path.dirname(PACKAGE_DIR)
+FRONTEND_DIST = os.path.join(ADMIN_DIR, "frontend", "dist")
+SPA_INDEX = os.path.join(FRONTEND_DIST, "index.html")
 
 
 @dataclass
@@ -117,16 +122,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.ctx = ctx
     app.state.created_admins = created
 
-    templates_dir.mkdir(parents=True, exist_ok=True)
-    static_dir = os.path.join(PACKAGE_DIR, "static")
-    os.makedirs(static_dir, exist_ok=True)
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
-
-    # Imported here so route modules can rely on app.state.ctx existing.
-    from admin.routes import api, pages
+    # /api/* is registered first and is unchanged by the SPA migration.
+    from admin.routes import api
 
     app.include_router(api.router, prefix="/api")
-    app.include_router(pages.router)
+
+    _mount_spa(app)
 
     @app.exception_handler(500)
     async def server_error(request: Request, exc: Exception):  # pragma: no cover
@@ -136,3 +137,62 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     return app
+
+
+def _mount_spa(app: FastAPI) -> None:
+    """Serve the built React SPA under /admin.
+
+    Registration order matters. The hashed asset directory is mounted
+    first, so a request for /admin/assets/app-<hash>.js is answered by
+    StaticFiles with a JavaScript content type. If the catch-all ran
+    first it would swallow that request and return index.html with
+    text/html, and the browser would refuse the module.
+    """
+    if not os.path.isdir(FRONTEND_DIST):
+        # Not fatal: the API stays usable and the message says how to fix
+        # it, which beats a container that dies on a missing npm build.
+        log.warning(
+            "Frontend build missing at %s - /admin will return instructions "
+            "instead of the app. Build it with: cd admin/frontend && "
+            "npm ci && npm run build",
+            FRONTEND_DIST,
+        )
+
+        @app.get("/admin", include_in_schema=False)
+        @app.get("/admin/{path:path}", include_in_schema=False)
+        async def _spa_missing(path: str = ""):  # pragma: no cover
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": (
+                        "Admin frontend is not built. Run: "
+                        "cd admin/frontend && npm ci && npm run build"
+                    )
+                },
+            )
+
+        return
+
+    assets_dir = os.path.join(FRONTEND_DIST, "assets")
+    if os.path.isdir(assets_dir):
+        app.mount(
+            "/admin/assets",
+            StaticFiles(directory=assets_dir),
+            name="spa-assets",
+        )
+
+    spa_router = APIRouter()
+
+    @spa_router.get("/admin", include_in_schema=False)
+    @spa_router.get("/admin/{path:path}", include_in_schema=False)
+    async def _spa(path: str = ""):
+        """Return index.html for every SPA route.
+
+        Client-side routing owns /admin/users and friends, so an unknown
+        path under /admin must return the shell rather than a 404 - the
+        browser needs index.html to resolve the route.
+        """
+        return FileResponse(SPA_INDEX, headers={"Cache-Control": "no-store"})
+
+    app.include_router(spa_router)
+    log.info("Serving SPA from %s", FRONTEND_DIST)
