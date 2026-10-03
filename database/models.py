@@ -323,6 +323,74 @@ class TelegramUser(Base):
     )
 
 
+# ---------------------------------------------------------------------------
+# Policy rules
+# ---------------------------------------------------------------------------
+
+
+class Rule(Base):
+    """One operator-managed policy rule, evaluated before every scan.
+
+    Rules exist so scan scope, deny-lists, rate limits and quotas can be
+    changed from the admin panel without editing ``.env`` and restarting the
+    bot. Like :class:`SystemSetting`, a row here overrides the static
+    configuration at runtime.
+
+    Evaluation order is ``priority`` ascending (1 first), then id, so a
+    rule added later cannot silently take precedence over an existing one.
+    All rules are consulted; the first that *blocks* wins. That ordering
+    matters for security: a deny rule must be able to outrank a broader
+    allow rule, and a rule the engine cannot evaluate must never be treated
+    as permission.
+
+    ``hit_count`` and ``last_hit_at`` are counters for the panel, not a log.
+    The authoritative record of why a scan was refused is ``audit_log``.
+    """
+
+    __tablename__ = "rules"
+    __table_args__ = (
+        # The evaluator's hot query: enabled rules for this context, in
+        # evaluation order.
+        Index("ix_rules_enabled_priority", "enabled", "priority"),
+        # Rule lookup by subject, for listing a user's or target's rules.
+        Index("ix_rules_scope", "scope", "scope_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # One of RULE_TYPES below. Validated in the service layer rather than by
+    # a CHECK constraint so adding a type needs no migration.
+    rule_type: Mapped[str] = mapped_column(String(32), index=True)
+    # Rule-type-specific payload: a CIDR, a domain suffix, a port list, a
+    # duration in seconds, or "HH:MM-HH:MM". Never a free-form command.
+    value: Mapped[str] = mapped_column(Text)
+    # Lower runs first. 50 is the neutral default so an operator can slot a
+    # rule in above or below without renumbering everything.
+    priority: Mapped[int] = mapped_column(Integer, default=50)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # global | user | target
+    scope: Mapped[str] = mapped_column(String(16), default="global")
+    # Polymorphic subject: a Telegram user id for scope="user", a target
+    # name for scope="target", NULL for scope="global". Deliberately not a
+    # foreign key, so a rule outlives its subject and may target a subject
+    # that does not exist yet.
+    scope_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Who wrote the rule: an admin username, or "system" for seeded defaults.
+    created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    # Observability for the panel: has this rule ever fired?
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_hit_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+
+
 # Canonical change_type vocabulary — keep in sync with core/change_detector.
 CHANGE_TYPES = (
     "new_host",
@@ -340,3 +408,21 @@ TELEGRAM_ROLES = ("viewer", "operator", "admin")
 
 # Supported bot languages.
 LANGUAGES = ("fa", "en")
+
+# Canonical rule_type vocabulary. Order is not significant; the member
+# set is. Value shapes are documented per member in core/rules.py.
+RULE_TYPES = (
+    "allow_cidr",
+    "deny_cidr",
+    "allow_domain",
+    "deny_domain",
+    "allow_port",
+    "deny_port",
+    "max_scan_time",
+    "rate_limit",
+    "time_window",
+    "user_quota",
+)
+
+# Canonical rule scope vocabulary. scope_id is unused when global.
+RULE_SCOPES = ("global", "user", "target")
