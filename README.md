@@ -190,6 +190,65 @@ per port would bury the signal.
 
 ---
 
+## Admin panel
+
+A separate FastAPI service on `127.0.0.1:8080` shares the database and the
+SQLAlchemy models with the bot. The API is JSON under `/api/*`; the UI is a
+React single-page app served from `/admin`.
+
+```
+  browser ──▶ admin (FastAPI, :8080)
+                ├─ /api/*        JSON, JWT in an HttpOnly cookie
+                ├─ /admin/assets hashed JS/CSS   (StaticFiles)
+                └─ /admin/*      index.html       (SPA catch-all)
+                                   │
+                                   └─ React Router owns the rest
+```
+
+`admin_users` is a separate table from `telegram_users`: merging them would
+let one compromise grant both surfaces. Every action, including those taken
+through Telegram, is written to `audit_log`.
+
+### Frontend
+
+The panel lives in `admin/frontend/` — Vite, React 18, TypeScript (`strict`,
+no `any`), Tailwind, Radix primitives, TanStack Query, Zustand, Recharts and
+sonner. **Node is only needed to build it.** The Docker build compiles the
+bundle once and the runtime image has no Node in it, so the bot and the admin
+service need nothing installed on the host.
+
+```bash
+# one-shot build (what the image does)
+cd admin/frontend
+npm ci
+npm run build        # runs tsc, so a type error fails the build
+
+# live dev server on :5173, proxying /api to the running panel on :8080
+npm run dev
+```
+
+`npm run typecheck` typechecks without emitting.
+
+Layout:
+
+| Path | Purpose |
+| --- | --- |
+| `src/lib/api.ts` | typed fetch wrapper, cookie auth, 401 → `/admin/login` |
+| `src/store/ui.ts` | theme and sidebar state (Zustand, persisted) |
+| `src/components/` | `AppShell`, `DataTable`, `Dialog`, `Badge`, `Switch`, … |
+| `src/pages/` | login, dashboard, users, targets, audit, settings |
+
+Colours are CSS variables switched by `data-theme` on `<html>`, so the theme
+toggle is one attribute flip rather than a re-render. Dark is the default;
+`prefers-color-scheme` is honoured on a first visit, and an inline script in
+`index.html` applies the theme before React mounts to avoid a flash.
+
+`admin/frontend/dist/` and `node_modules/` are gitignored — the image builds
+its own bundle, and `package-lock.json` is committed so `npm ci` is
+reproducible.
+
+---
+
 ## Setup
 
 ```bash
@@ -199,6 +258,10 @@ chmod 600 .env
 
 docker compose up -d --build
 ```
+
+The build runs `npm ci && npm run build` for the admin panel, so the
+first build downloads the Node toolchain and every dependency. No Node
+is required on the host.
 
 To restrict scanning, set `ALLOWED_CIDRS` (e.g. `192.168.174.0/24`). When set,
 targets outside those ranges are rejected and hostnames are refused — they
@@ -261,7 +324,7 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/src" -w /src \
   -lc 'pip install -q --user pytest pytest-asyncio && PATH="$HOME/.local/bin:$PATH" python -m pytest -q'
 ```
 
-139 tests, no network access required — `tests/test_v1_integration.py` drives
+323 tests, no network access required — `tests/test_v1_integration.py` drives
 the full pipeline and the scheduler with a stub runner.
 
 Layout:
@@ -278,10 +341,26 @@ Layout:
 | `test_v1_units.py` | rate limiter, exporters, reporter, logging |
 | `test_retention.py` | selection logic, FK order, baseline safety |
 | `test_v1_integration.py` | scheduler lifecycle, shared worker, change→alert |
+| `test_admin_api.py` | admin API, role gating, SPA shell serving |
+| `test_admin_auth.py` | password hashing, JWT, login throttling |
+| `test_admin_users_stats.py` | user CRUD, dashboard queries |
+| `test_audit_settings.py` | audit trail, settings coercion |
+| `test_i18n.py` | translation coverage and fallback |
+
+The frontend has its own gate: `npm run build` runs `tsc`, so a type
+error fails the admin image build.
 
 ---
 
 ## Known limitations
+
+- **The SPA is served uncompressed.** Neither uvicorn nor Starlette's
+  `StaticFiles` applies gzip or brotli, so a browser pulls ~1 MB of
+  assets (~290 KB gzipped) on a cold cache. Put a reverse proxy that
+  compresses in front for anything beyond localhost.
+- **The panel has no TLS and no CSRF token.** It binds to
+  `127.0.0.1` and sets `ADMIN_COOKIE_SECURE=false`; both need revisiting
+  behind a proxy (`csrf_required` is reported by the API for this).
 
 - **No auth on read commands.** `/targets`, `/scans`, `/export`, `/report`
   and `/health` are available to any allowed user, not just operators.

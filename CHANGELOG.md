@@ -4,6 +4,73 @@ All notable changes to NetSentinel. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 semantic versioning loosely.
 
+## [Unreleased] — V2
+
+### Added
+
+**Admin service**
+- A separate FastAPI application on `127.0.0.1:8080` sharing the database and
+  ORM models with the bot. Login, logout, session check, password change,
+  Telegram-user CRUD, audit browsing and CSV export, runtime settings,
+  targets, scan history, change events and dashboard statistics.
+- `admin_users` table, deliberately separate from `telegram_users`, with
+  bcrypt password hashing, JWT in an HttpOnly cookie, role gates
+  (`viewer`/`admin`/`superadmin`) and in-memory login throttling.
+- Append-only `audit_log` recording every action from both surfaces,
+  including failed logins. Audit failures are logged and swallowed so they
+  can never abort the operation being audited.
+- `system_settings` overrides environment config at runtime through a 5 s TTL
+  cache, so changes apply without a restart. An invalid stored value falls
+  back to the default instead of poisoning every read.
+- Purge is superadmin-only and requires `confirm=true`; `/deltarget` is
+  block-by-default.
+
+**Bot i18n**
+- `/tlang fa|en` per-user language switcher. A user's own setting wins over
+  the global `bot_language`. Every bot string routes through `t()`, which
+  falls back requested → `en` → the key itself. `fa` and `en` translation
+  files are held to the same key count by a test.
+
+**Frontend**
+- The admin panel was rebuilt as a React 18 SPA (Vite, TypeScript `strict`,
+  Tailwind, Radix, TanStack Query, Zustand, Recharts, sonner), replacing the
+  server-rendered Jinja2 pages. Dark theme by default with a persisted
+  light/dark toggle, green for success and primary actions, red for
+  destructive ones.
+- `npm run build` typechecks first, so a type error fails the image build.
+  `admin/Dockerfile` builds the bundle in a `node:20-alpine` stage and ships
+  only Python at runtime.
+
+### Changed
+
+- `bootstrap.py` mounts `admin/frontend/dist/assets` and an `/admin/*`
+  catch-all that returns `index.html`, so client-side routes survive a hard
+  refresh. The asset mount is registered first; if the catch-all ran first it
+  would serve JavaScript as `text/html` and the browser would refuse it.
+- Added `GET /api/stats/series` for the dashboard chart. All other `/api/*`
+  endpoints are unchanged.
+- `jinja2` dropped from `requirements.txt`; the panel no longer renders HTML
+  on the server.
+- `.gitignore` now excludes `node_modules`, `admin/frontend/dist` and editor
+  swap files (a nano swap file of `.env` can contain its contents).
+
+### Removed
+
+- `admin/routes/pages.py`, `admin/templates.py`, `admin/templates/` and
+  `admin/static/`.
+
+### Fixed
+
+- `FRONTEND_DIST` is resolved from the admin package root, not from
+  `admin/services`.
+
+### Tests
+
+323 passing. `TestPages` was replaced by `TestSpaShell` (assets served with a
+JavaScript content type, unknown routes fall through to `index.html`,
+`no-store` on the shell, an actionable 503 when the build is missing) and
+`TestStatsSeriesApi`.
+
 ## [Unreleased] — V1
 
 ### Added
