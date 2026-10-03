@@ -23,6 +23,12 @@ COPY parser/     ./parser/
 COPY database/   ./database/
 COPY workers/    ./workers/
 
+# The bot imports admin.services.{audit,users,settings_store} for
+# audit logging and per-user preferences. Those modules live with
+# the admin package, so ship it here too rather than duplicating
+# them under bot/.
+COPY admin/       ./admin/
+
 # Drop privileges: the bot needs no write access to its own code.
 RUN useradd --create-home --uid 10001 netsentinel \
     && chown -R netsentinel:netsentinel /app

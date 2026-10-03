@@ -4,6 +4,10 @@ All runtime configuration is read from environment variables and validated
 here, in one place. Nothing else in the codebase should touch
 ``os.environ`` directly — that keeps secrets and tunables in a single,
 auditable module.
+
+Values that must be changeable at runtime (rate limit, retention, bot
+language) are also mirrored into ``system_settings`` so the admin panel can
+adjust them without a restart. See ``admin/services/settings_store.py``.
 """
 
 from __future__ import annotations
@@ -109,6 +113,16 @@ class Settings:
     # --- hardening (V1) ---
     rate_limit_seconds: int
 
+    # --- admin panel (V2) ---
+    admin_port: int
+    admin_host: str
+    # Force the Secure cookie flag. Leave off for plain-HTTP LAN access;
+    # a Secure cookie over http:// would never be sent back.
+    admin_cookie_secure: bool
+    # Only trust X-Forwarded-For when actually behind a proxy, otherwise a
+    # client can spoof its IP to dodge the login rate limit.
+    admin_trust_forwarded_for: bool
+
     @classmethod
     def from_env(cls) -> "Settings":
         allowed = _csv_ints("ALLOWED_USER_IDS")
@@ -151,4 +165,11 @@ class Settings:
             export_max_scans=_positive("EXPORT_MAX_SCANS", "20"),
 
             rate_limit_seconds=_int("RATE_LIMIT_SECONDS", "30"),
+
+            admin_port=_int("ADMIN_PORT", "8080"),
+            admin_host=_optional("ADMIN_HOST", "0.0.0.0"),
+            admin_cookie_secure=_bool("ADMIN_COOKIE_SECURE", "false"),
+            admin_trust_forwarded_for=_bool(
+                "ADMIN_TRUST_FORWARDED_FOR", "false"
+            ),
         )

@@ -139,6 +139,51 @@ class TargetRepository:
         self._s.flush()
         return True
 
+    def purge_by_id(self, target_id: int) -> dict[str, int]:
+        """Purge by primary key rather than name — used by the admin panel.
+
+        Identical policy to :meth:`purge`; this exists because the panel
+        works with row ids, not names.
+        """
+        target = self.get(target_id)
+        if target is None:
+            raise RepositoryError(f"No target with id {target_id}.")
+
+        scan_ids = list(
+            self._s.scalars(select(Scan.id).where(Scan.target_id == target.id))
+        )
+        host_ids: list[int] = []
+        if scan_ids:
+            host_ids = list(
+                self._s.scalars(
+                    select(Host.id).where(Host.scan_id.in_(scan_ids))
+                )
+            )
+
+        counts = {"services": 0, "hosts": 0, "change_events": 0, "scans": 0}
+        counts["schedules"] = self._s.execute(
+            delete(Schedule).where(Schedule.target_id == target.id)
+        ).rowcount
+        if host_ids:
+            counts["services"] = self._s.execute(
+                delete(Service).where(Service.host_id.in_(host_ids))
+            ).rowcount
+        if scan_ids:
+            counts["change_events"] = self._s.execute(
+                delete(ChangeEvent).where(ChangeEvent.scan_id.in_(scan_ids))
+            ).rowcount
+            counts["hosts"] = self._s.execute(
+                delete(Host).where(Host.id.in_(host_ids))
+            ).rowcount
+            counts["scans"] = self._s.execute(
+                delete(Scan).where(Scan.id.in_(scan_ids))
+            ).rowcount
+
+        self._s.delete(target)
+        self._s.flush()
+        counts["targets"] = 1
+        return counts
+
     def purge(self, name: str) -> dict[str, int]:
         """Delete a target and all of its history, in safe FK order.
 
@@ -242,10 +287,18 @@ class ScanRepository:
         self._s = session
 
     def create(
-        self, target_id: int, profile: str, source: str = "manual"
+        self,
+        target_id: int,
+        profile: str,
+        source: str = "manual",
+        requested_by: int | None = None,
     ) -> Scan:
         scan = Scan(
-            target_id=target_id, profile=profile, status="running", source=source
+            target_id=target_id,
+            profile=profile,
+            status="running",
+            source=source,
+            requested_by=requested_by,
         )
         self._s.add(scan)
         self._s.flush()

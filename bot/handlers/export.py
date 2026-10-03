@@ -8,7 +8,13 @@ from collections import defaultdict
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from bot.handlers.common import authenticate_or_denounce
+from bot.handlers.common import (
+    audit,
+    authenticate_or_denounce,
+    database,
+    lang_of_update,
+)
+from bot.messages import reports
 from core.exporters import build_scan_rows, render
 from core.reporter import REPORT_WINDOW_DAYS, build_summary
 from database.repository import ChangeRepository, ScanRepository
@@ -16,30 +22,18 @@ from database.repository import ChangeRepository, ScanRepository
 log = logging.getLogger(__name__)
 
 SUPPORTED_FORMATS = ("json", "csv")
-
-
-def _registry(context):
-    return context.application.bot_data["target_registry"]
-
-
-def _database(context):
-    return context.application.bot_data["database"]
-
-
-def _safe_filename(name: str) -> str:
-    """Strip anything that could confuse a filesystem or a file header."""
-    return "".join(c for c in name if c.isalnum() or c in "-_.")[:64] or "export"
+MAX_EXPORT_BYTES = 45 * 1024 * 1024
 
 
 async def export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = lang_of_update(update, context)
     principal = await authenticate_or_denounce(update, context)
     if principal is None:
         return
 
     if not context.args:
         await update.message.reply_text(
-            "Usage: /export <target> [format]\n"
-            f"Formats: {', '.join(SUPPORTED_FORMATS)} (default json)"
+            reports.export_usage(lang, SUPPORTED_FORMATS)
         )
         return
 
@@ -48,29 +42,33 @@ async def export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if fmt not in SUPPORTED_FORMATS:
         await update.message.reply_text(
-            f"❌ Unsupported format '{fmt}'.\n"
-            f"Supported: {', '.join(SUPPORTED_FORMATS)}"
+            reports.export_bad_format(lang, fmt, SUPPORTED_FORMATS)
         )
         return
 
-    target = _registry(context).get(reference)
+    registry = context.application.bot_data["target_registry"]
+    target = registry.get(reference)
     if target is None:
-        await update.message.reply_text(
-            f"❌ No target named '{reference}'.\n"
-            "Register it first: /addtarget <name> <value>"
-        )
+        await update.message.reply_text(reports.export_unknown_target(lang, reference))
         return
 
-    max_scans = context.application.bot_data["settings"].export_max_scans
-    database = _database(context)
+    settings = context.application.bot_data["settings"]
+    store = context.application.bot_data.get("settings_store")
+    max_scans = int(
+        (store.get("export_max_scans") if store else None)
+        or settings.export_max_scans
+    )
+    db = database(context)
 
     try:
-        with database.session() as session:
-            from database.repository import TargetRepository
+        from database.repository import TargetRepository
 
+        with db.session() as session:
             row = TargetRepository(session).get_by_name(target.name)
             if row is None:  # pragma: no cover - race
-                await update.message.reply_text(f"❌ Target '{reference}' vanished.")
+                await update.message.reply_text(
+                    reports.target_not_found(lang, reference)
+                )
                 return
             target_id = row.id
 
@@ -78,10 +76,7 @@ async def export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             changes = ChangeRepository(session).for_scans([s.id for s in scans])
 
         if not scans:
-            await update.message.reply_text(
-                f"❌ No scans recorded for '{target.name}' yet.\n"
-                f"Run /scan {target.name} first."
-            )
+            await update.message.reply_text(reports.export_no_scans(lang, target.name))
             return
 
         by_scan = defaultdict(list)
@@ -91,62 +86,73 @@ async def export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 by_scan[scan_id].append(change)
 
         rows = build_scan_rows(scans, by_scan)
-        content, suffix, mime = render(rows, fmt)
+        content, suffix, _mime = render(rows, fmt)
     except Exception as exc:  # noqa: BLE001 — always answer
         log.exception("/export failed for %s", reference)
         await update.message.reply_text(
-            f"⚠️ Export failed: {type(exc).__name__}. "
-            "The operator should check the bot logs."
+            reports.handler_failed(lang, "/export", type(exc).__name__)
+        )
+        audit(
+            context, "export.run",
+            actor_id=principal.user_id, actor_username=principal.username,
+            target_type="target", target_id=target.name,
+            details={"error": type(exc).__name__}, success=False,
         )
         return
 
+    audit(
+        context, "export.run",
+        actor_id=principal.user_id, actor_username=principal.username,
+        target_type="target", target_id=target.name,
+        details={"format": suffix, "scans": len(rows)},
+    )
+
     filename = f"netsentinel_{_safe_filename(target.name)}.{suffix}"
+    payload = content.encode("utf-8")
 
     # Telegram caps documents at 50 MB; guard before spending the upload.
-    payload = content.encode("utf-8")
-    if len(payload) > 45 * 1024 * 1024:
+    if len(payload) > MAX_EXPORT_BYTES:
         await update.message.reply_text(
-            f"❌ Export too large ({len(payload) // 1024} KB). "
-            f"Try a smaller EXPORT_MAX_SCANS (currently {max_scans})."
+            reports.export_too_large(
+                lang, len(payload) // 1024, max_scans
+            )
         )
         return
 
     await update.message.reply_document(
         document=payload,
         filename=filename,
-        caption=(
-            f"📦 Export of '{target.name}' — {len(rows)} scan(s), "
-            f"format {suffix.upper()}"
-        ),
+        caption=reports.export_caption(lang, target.name, len(rows), suffix),
     )
 
 
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = lang_of_update(update, context)
     principal = await authenticate_or_denounce(update, context)
     if principal is None:
         return
 
     if not context.args:
-        await update.message.reply_text(
-            f"Usage: /report <target>\n"
-            f"Shows the last {REPORT_WINDOW_DAYS} days."
-        )
+        await update.message.reply_text(reports.report_usage(lang, REPORT_WINDOW_DAYS))
         return
 
     reference = context.args[0]
-    target = _registry(context).get(reference)
+    registry = context.application.bot_data["target_registry"]
+    target = registry.get(reference)
     if target is None:
-        await update.message.reply_text(f"❌ No target named '{reference}'.")
+        await update.message.reply_text(reports.report_unknown_target(lang, reference))
         return
 
-    database = _database(context)
+    db = database(context)
     try:
-        with database.session() as session:
-            from database.repository import TargetRepository
+        from database.repository import TargetRepository
 
+        with db.session() as session:
             row = TargetRepository(session).get_by_name(target.name)
             if row is None:  # pragma: no cover - race
-                await update.message.reply_text(f"❌ Target '{reference}' vanished.")
+                await update.message.reply_text(
+                    reports.target_not_found(lang, reference)
+                )
                 return
             target_id = row.id
 
@@ -161,9 +167,18 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as exc:  # noqa: BLE001
         log.exception("/report failed for %s", reference)
         await update.message.reply_text(
-            f"⚠️ Report failed: {type(exc).__name__}. "
-            "The operator should check the bot logs."
+            reports.handler_failed(lang, "/report", type(exc).__name__)
         )
         return
 
-    await update.message.reply_text(summary.text())
+    audit(
+        context, "report.run",
+        actor_id=principal.user_id, actor_username=principal.username,
+        target_type="target", target_id=target.name, details={},
+    )
+    await update.message.reply_text(reports.report_text(lang, summary))
+
+
+def _safe_filename(name: str) -> str:
+    """Strip anything that could confuse a filesystem or a file header."""
+    return "".join(c for c in name if c.isalnum() or c in "-_.")[:64] or "export"

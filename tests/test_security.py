@@ -30,6 +30,10 @@ def make_settings(ids=(100, 200)):
         retention_max_scans_per_target=100,
         export_max_scans=20,
         rate_limit_seconds=30,
+        admin_port=8080,
+        admin_host="0.0.0.0",
+        admin_cookie_secure=False,
+        admin_trust_forwarded_for=False,
     )
 
 

@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — NetSentinel Admin{% endblock %}
+{% block heading %}Dashboard{% endblock %}
+
+{% block content %}
+
+{% if not principal.has_role('admin') %}
+<div class="flash warn">
+  Viewer role: statistics are visible, but changes are not permitted.
+</div>
+{% endif %}
+
+<div class="cards">
+  <div class="card">
+    <div class="label">Targets</div>
+    <div class="value">{{ stats.targets }}</div>
+    <div class="sub">registered</div>
+  </div>
+  <div class="card">
+    <div class="label">Scans (all time)</div>
+    <div class="value">{{ stats.scans }}</div>
+    <div class="sub">{{ stats.scans_24h }} in last 24h</div>
+  </div>
+  <div class="card">
+    <div class="label">Failed (24h)</div>
+    <div class="value">{{ stats.scans_24h_failed }}</div>
+    <div class="sub">of {{ stats.scans_24h }} runs</div>
+  </div>
+  <div class="card">
+    <div class="label">Change events</div>
+    <div class="value">{{ stats.changes }}</div>
+    <div class="sub">{{ stats.changes_24h }} in last 24h</div>
+  </div>
+  <div class="card">
+    <div class="label">Hosts recorded</div>
+    <div class="value">{{ stats.hosts }}</div>
+    <div class="sub">{{ stats.services }} services</div>
+  </div>
+  <div class="card">
+    <div class="label">Telegram users</div>
+    <div class="value">{{ stats.telegram_users }}</div>
+    <div class="sub">{{ stats.admins }} admin(s)</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Scans and changes — last 7 days</h2>
+  {% set series = stats.series %}
+  {% if series and series|length > 0 %}
+    {% set peak = series | map(attribute='scans') | max %}
+    {% set peak = peak if peak and peak > 0 else 1 %}
+    <svg class="chart" viewBox="0 0 700 190" preserveAspectRatio="none"
+         role="img" aria-label="Scans and changes over the last 7 days">
+      {# Gridlines every 25% #}
+      {% for frac in [0, 0.25, 0.5, 0.75, 1.0] %}
+        {% set y = 160 - (140 * frac) %}
+        <line class="axis" x1="36" y1="{{ y }}" x2="690" y2="{{ y }}"
+              stroke-opacity="0.35"/>
+        <text class="tick" x="30" y="{{ y + 3 }}" text-anchor="end">
+          {{ (peak * frac) | round | int }}
+        </text>
+      {% endfor %}
+      <line class="axis" x1="36" y1="160" x2="690" y2="160"/>
+
+      {% set n = series | length %}
+      {% set slot = (654 / n) if n else 0 %}
+      {% for point in series %}
+        {% set i = loop.index0 %}
+        {% set x = 36 + (i * slot) %}
+        {% set bar_h = (point.scans / peak) * 130 %}
+        {# scans: solid; changes: hatched overlay #}
+        <rect class="bar-scan"
+              x="{{ x | round(1) }}" y="{{ (160 - bar_h) | round(1) }}"
+              width="{{ (slot * 0.7) | round(1) }}"
+              height="{{ bar_h | round(1) }}" rx="2"/>
+        {% if point.changes %}
+          {% set ch_h = (point.changes / peak) * 130 %}
+          <rect class="bar-change"
+                x="{{ (x + slot * 0.72) | round(1) }}"
+                y="{{ (160 - ch_h) | round(1) }}"
+                width="{{ (slot * 0.22) | round(1) }}"
+                height="{{ ch_h | round(1) }}" rx="1"/>
+        {% endif %}
+        <text class="tick" x="{{ (x + slot / 2) | round(1) }}" y="176"
+              text-anchor="middle">{{ point.date[5:] }}</text>
+      {% endfor %}
+    </svg>
+    <div class="legend">
+      <span><i style="background:var(--accent)"></i>scans</span>
+      <span><i style="background:#fab387"></i>change events</span>
+    </div>
+  {% else %}
+    <div class="empty">No scan activity in the last 7 days.</div>
+  {% endif %}
+</div>
+
+<div class="grid-2">
+  <div class="panel">
+    <h2>Change events by type (7 days)</h2>
+    {% if breakdown %}
+    <table>
+      <tbody>
+        {% for kind, count in breakdown.items() %}
+        <tr><td>{{ kind }}</td><td class="num">{{ count }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No change events recorded.</div>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>System</h2>
+    <table>
+      <tbody>
+        <tr><td>Last successful scan</td>
+            <td class="right mono">{{ fmt(stats.last_scan_at, "never") }}</td></tr>
+        <tr><td>Scheduled alert chat</td>
+            <td class="right mono">
+              {% if operator_chat %}{{ operator_chat.chat_id }}{% else %}not set{% endif %}
+            </td></tr>
+        <tr><td>Recorded admins</td>
+            <td class="right">{{ stats.admins }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Recent activity</h2>
+  {% if recent %}
+  <table>
+    <thead>
+      <tr>
+        <th>When</th><th>Actor</th><th>Action</th><th>Result</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for entry in recent %}
+      <tr>
+        <td class="mono">{{ fmt(entry.created_at) }}</td>
+        <td>
+          {{ entry.actor_username or entry.actor_type }}
+          <span class="badge">{{ entry.actor_type }}</span>
+        </td>
+        <td class="mono">{{ entry.action }}</td>
+        <td>
+          {% if entry.success %}
+            <span class="badge ok">ok</span>
+          {% else %}
+            <span class="badge bad">failed</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No activity logged yet.</div>
+  {% endif %}
+</div>
+
+{% endblock %}

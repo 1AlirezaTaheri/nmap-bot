@@ -94,7 +94,7 @@ class TestScanHistoryIsDefensive:
         with db.session() as s:
             rows = ScanRepository(s).recent(target_id, limit=10)
 
-        text = reports.scan_history(rows)
+        text = reports.scan_history("en", rows)
         assert isinstance(text, str)
         assert "Scan history" in text
         assert "home" in text
@@ -114,7 +114,7 @@ class TestScanHistoryIsDefensive:
             service_count = 2
             target = None
 
-        text = reports.scan_history([Bare(), *rows])
+        text = reports.scan_history("en", [Bare(), *rows])
         assert "#99" in text
         assert "?" in text
 
@@ -134,12 +134,12 @@ class TestScanHistoryIsDefensive:
             def target(self):
                 raise RuntimeError("detached!")
 
-        text = reports.scan_history([Hostile()])
+        text = reports.scan_history("en", [Hostile()])
         assert "#7" in text
         assert "?" in text
 
     def test_empty_list(self):
-        assert reports.scan_history([]) == "No scans recorded yet."
+        assert reports.scan_history("en", []) == "No scans recorded yet."
 
     def test_missing_started_at_renders_placeholder(self, db):
         target_id = seed(db, scans=1)
@@ -147,5 +147,5 @@ class TestScanHistoryIsDefensive:
             rows = ScanRepository(s).recent(target_id, limit=10)
         for row in rows:
             row.started_at = None
-        text = reports.scan_history(rows)
+        text = reports.scan_history("en", rows)
         assert "?" in text

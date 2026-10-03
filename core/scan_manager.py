@@ -50,14 +50,16 @@ class ScanManager:
         target_value: str,
         profile: ScanProfile,
         source: str = "manual",
+        requested_by: int | None = None,
     ) -> ScanOutcome:
         """Run one scan end-to-end and persist the result.
 
         The target row is resolved here so callers never manage ids —
         every scan gets a valid foreign key, including ad-hoc targets.
 
-        ``source`` records provenance ("manual" / "scheduled") on the scan
-        row so history can show which runs were automated.
+        ``source`` records provenance ("manual" / "scheduled") and
+        ``requested_by`` the Telegram id behind it, so the panel can show
+        per-user scan counts and attribute history.
         """
         # Commit the "running" row first, so a crash mid-scan still leaves
         # a durable record instead of losing the attempt entirely.
@@ -68,7 +70,8 @@ class ScanManager:
             target_id = target_row.id
             target_name = target_row.name
             scan_id = ScanRepository(session).create(
-                target_id, profile.name, source=source
+                target_id, profile.name, source=source,
+                requested_by=requested_by,
             ).id
 
         with self._db.session() as session:

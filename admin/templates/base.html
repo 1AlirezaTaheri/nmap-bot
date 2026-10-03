@@ -1,0 +1,42 @@
+{# Shared shell for every authenticated page. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}NetSentinel Admin{% endblock %}</title>
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      NetSentinel
+      <small>admin panel</small>
+    </div>
+    {{ nav | safe }}
+    <div style="margin-top:18px">
+      {# Posts to a page route that redirects; /api/logout returns JSON. #}
+      <form method="post" action="/admin/logout">
+        <button class="ghost" type="submit" style="width:100%">Sign out</button>
+      </form>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <h1>{% block heading %}{% endblock %}</h1>
+      <div class="who">
+        {{ principal.username }} &middot;
+        <span class="badge">{{ principal.role }}</span>
+      </div>
+    </div>
+
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+<script src="/static/admin.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

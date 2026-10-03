@@ -431,7 +431,7 @@ class TestChangeDetectionIntegration:
             stored = ChangeRepository(s).for_scan(second.scan_id)
         assert len(stored) == len(second.changes)
 
-        alert = reports.scheduled_alert(second)
+        alert = reports.scheduled_alert(second, "en")
         assert "NETWORK CHANGES DETECTED" in alert
         assert "New host: 10.0.0.2" in alert
         assert "Summary:" in alert
@@ -449,6 +449,6 @@ class TestChangeDetectionIntegration:
         second = manager.execute("10.0.0.0/24", get_profile("service"))
 
         assert second.changes == []
-        alert = reports.scheduled_alert(second)
+        alert = reports.scheduled_alert(second, "en")
         assert "no changes" in alert
         assert "NETWORK CHANGES" not in alert

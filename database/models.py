@@ -2,6 +2,9 @@
 
 Portable types only (no PostgreSQL-specific constructs) so the same models
 run against SQLite in tests and PostgreSQL in production.
+
+Both the Telegram bot and the FastAPI admin service import from here. Do
+not duplicate these definitions per service; extend them in this module.
 """
 
 from __future__ import annotations
@@ -9,6 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -24,6 +28,11 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 class Base(DeclarativeBase):
     pass
+
+
+# ---------------------------------------------------------------------------
+# Core scanning domain (shared by bot and admin)
+# ---------------------------------------------------------------------------
 
 
 class Target(Base):
@@ -58,6 +67,11 @@ class Scan(Base):
     status: Mapped[str] = mapped_column(String(16), default="running")
     # Which trigger produced this scan: manual, scheduled, or retention.
     source: Mapped[str] = mapped_column(String(16), default="manual")
+    # Who requested it: NULL for scheduled runs, telegram id for manual.
+    # BigInteger: Telegram IDs overflow 32-bit INTEGER.
+    requested_by: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
     started_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
@@ -148,12 +162,7 @@ class ChangeEvent(Base):
 
 
 class Schedule(Base):
-    """A recurring scan for a target (V1).
-
-    ``enabled`` false means paused — a pause keeps the operator's
-    configuration instead of deleting it, so ``/schedule resume`` works
-    without re-specifying the interval.
-    """
+    """A recurring scan for a target (V1)."""
 
     __tablename__ = "schedules"
     __table_args__ = (UniqueConstraint("target_id",),)
@@ -186,10 +195,127 @@ class OperatorChat(Base):
     __tablename__ = "operator_chats"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    chat_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
-    user_id: Mapped[int] = mapped_column(Integer)
+    # BigInteger: Telegram chat and user ids overflow 32-bit INTEGER.
+    chat_id: Mapped[int] = mapped_column(
+        BigInteger, unique=True, index=True
+    )
+    user_id: Mapped[int] = mapped_column(BigInteger)
     username: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+
+
+# ---------------------------------------------------------------------------
+# Admin panel (V2)
+# ---------------------------------------------------------------------------
+
+
+class AdminUser(Base):
+    """A web-panel administrator.
+
+    Deliberately *not* the same table as Telegram users: an admin has a
+    password and web role, a Telegram user has a numeric ID and a chat role.
+    Linking them would mean one compromise grants both surfaces.
+    """
+
+    __tablename__ = "admin_users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # bcrypt hash; never the plaintext.
+    password_hash: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # superadmin | admin | viewer
+    role: Mapped[str] = mapped_column(String(16), default="viewer")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+
+
+class AuditLog(Base):
+    """Append-only record of every consequential action.
+
+    Rows are never updated or deleted by application code. ``success`` is
+    stored explicitly so failed attempts (a rejected login, a refused
+    scan) are as visible as successful ones.
+    """
+
+    __tablename__ = "audit_log"
+    __table_args__ = (
+        Index("ix_audit_created_at", "created_at"),
+        Index("ix_audit_actor_id", "actor_id"),
+        Index("ix_audit_action", "action"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # admin | telegram_user | system
+    actor_type: Mapped[str] = mapped_column(String(24))
+    # BigInteger: holds Telegram ids, which exceed 32-bit INTEGER.
+    actor_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    actor_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    target_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    target_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # JSON-encoded string: portable across SQLite and PostgreSQL.
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), index=True
+    )
+
+
+class SystemSetting(Base):
+    """Runtime-tunable configuration, editable from the web panel.
+
+    Values override the environment at runtime so an operator can change a
+    limit without editing ``.env`` and restarting the bot.
+    """
+
+    __tablename__ = "system_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+    updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class TelegramUser(Base):
+    """A Telegram user known to the system, with role and preferences.
+
+    Distinct from ``operator_chats``: that table only remembers *which chat
+    receives scheduled alerts*, while this one holds the full access
+    record and survives the alert destination changing.
+    """
+
+    __tablename__ = "telegram_users"
+
+    # BigInteger: Telegram IDs overflow 32-bit INTEGER.
+    telegram_user_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True
+    )
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # viewer | operator | admin
+    role: Mapped[str] = mapped_column(String(16), default="viewer")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # fa | en
+    language: Mapped[str] = mapped_column(String(4), default="fa")
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    notifications_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    first_seen_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(
@@ -205,3 +331,12 @@ CHANGE_TYPES = (
     "closed_port",
     "service_change",
 )
+
+# Canonical admin/web role vocabulary — weakest to strongest.
+ADMIN_ROLES = ("viewer", "admin", "superadmin")
+
+# Canonical Telegram role vocabulary — weakest to strongest.
+TELEGRAM_ROLES = ("viewer", "operator", "admin")
+
+# Supported bot languages.
+LANGUAGES = ("fa", "en")

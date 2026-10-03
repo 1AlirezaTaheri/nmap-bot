@@ -11,39 +11,31 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from bot.handlers.common import authenticate_or_denounce, authorizer
+from bot.handlers.common import (
+    audit,
+    authenticate_or_denounce,
+    authorizer,
+    database,
+    lang_of_update,
+)
 from bot.messages import reports
-from core.profiles import UnknownProfileError, PROFILES
+from core.profiles import PROFILES
 from database.repository import RepositoryError, ScheduleRepository
 from security.authorization import AuthorizationError
 
 log = logging.getLogger(__name__)
 
-USAGE = (
-    "⏱ Scheduled monitoring\n"
-    "/schedule list — show all schedules\n"
-    "/schedule add <target> <profile> <hours>\n"
-    "/schedule remove <target>\n"
-    "/schedule pause <target>\n"
-    "/schedule resume <target>\n"
-    "/schedule pause-all\n"
-    "/schedule resume-all"
-)
 
-
-def _registry(context):
+def _registry(context: ContextTypes.DEFAULT_TYPE):
     return context.application.bot_data["target_registry"]
 
 
-def _scheduler(context):
-    return context.application.bot_data["scheduler"]
-
-
-def _database(context):
-    return context.application.bot_data["database"]
+def _scheduler(context: ContextTypes.DEFAULT_TYPE):
+    return context.application.bot_data.get("scheduler")
 
 
 async def schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = lang_of_update(update, context)
     principal = await authenticate_or_denounce(update, context)
     if principal is None:
         return
@@ -51,11 +43,11 @@ async def schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         authorizer(context).require_role(principal, "manage schedules")
     except AuthorizationError as exc:
-        await update.message.reply_text(f"⛔ {exc}")
+        await update.message.reply_text(reports.forbidden(lang, str(exc)))
         return
 
     if not context.args:
-        await update.message.reply_text(USAGE)
+        await update.message.reply_text(reports.schedule_usage(lang))
         return
 
     subcommand = context.args[0].lower()
@@ -73,93 +65,85 @@ async def schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     handler = handlers.get(subcommand)
     if handler is None:
         await update.message.reply_text(
-            f"❌ Unknown subcommand '{subcommand}'.\n\n{USAGE}"
+            reports.schedule_unknown(lang, subcommand)
         )
         return
 
     try:
-        await handler(update, context, args)
+        await handler(update, context, args, lang, principal)
     except Exception as exc:  # noqa: BLE001 — always answer
         log.exception("/schedule %s failed", subcommand)
         await update.message.reply_text(
-            f"⚠️ /schedule {subcommand} failed: {type(exc).__name__}. "
-            "The operator should check the bot logs."
+            reports.handler_failed(lang, f"/schedule {subcommand}", type(exc).__name__)
         )
 
 
-def _resolve_target(context, reference: str):
-    """Return (TargetRow, name) or raise ValueError with a user message."""
+def _resolve_target(context: ContextTypes.DEFAULT_TYPE, reference: str, lang: str):
+    """Return ``(target_id, name)`` or raise ValueError carrying a user message."""
     target = _registry(context).get(reference)
     if target is None:
-        raise ValueError(f"No target named '{reference}'. Add it with /addtarget.")
-    database = _database(context)
-    with database.session() as session:
-        row = ScheduleRepository(session)  # touch to ensure session works
-        from database.repository import TargetRepository
+        raise ValueError(reports.target_not_found(lang, reference))
 
+    from database.repository import TargetRepository
+
+    with database(context).session() as session:
         record = TargetRepository(session).get_by_name(target.name)
         if record is None:  # pragma: no cover - race
-            raise ValueError(f"Target '{reference}' vanished.")
+            raise ValueError(reports.target_not_found(lang, reference))
         return record.id, record.name
 
 
-async def _list(update: Update, context, args) -> None:
-    database = _database(context)
-    with database.session() as session:
+async def _list(update, context, args, lang, principal) -> None:
+    with database(context).session() as session:
         rows = ScheduleRepository(session).all()
     scheduler = _scheduler(context)
-    header = reports.schedules_list(rows)
-    if scheduler is not None and not scheduler.running:
-        header += "\n\n(Scheduler is not running — SCHEDULE_ENABLED=false)"
-    await update.message.reply_text(header)
+    running = bool(scheduler is not None and scheduler.running)
+    await update.message.reply_text(reports.schedules_list(lang, rows, running))
 
 
-async def _add(update: Update, context, args) -> None:
+async def _add(update, context, args, lang, principal) -> None:
     if len(args) < 2:
         await update.message.reply_text(
-            "Usage: /schedule add <target> <profile> <hours>\n"
-            f"Profiles: {', '.join(sorted(PROFILES))}\n"
-            "Example: /schedule add home service 6"
+            reports.schedule_add_usage(lang, list(PROFILES))
         )
         return
 
-    reference = args[0]
-    profile = args[1].lower()
+    reference, profile = args[0], args[1].lower()
 
-    try:
-        PROFILES[profile]
-    except KeyError:
+    if profile not in PROFILES:
         await update.message.reply_text(
-            f"❌ Unknown profile '{profile}'.\n"
-            f"Available: {', '.join(sorted(PROFILES))}"
+            reports.schedule_bad_profile(lang, profile, list(PROFILES))
         )
         return
 
     hours_raw = args[2] if len(args) > 2 else None
     if hours_raw is None:
         # Default interval comes from configuration, never a literal here.
-        hours = context.application.bot_data["settings"].schedule_interval_hours
+        store = context.application.bot_data.get("settings_store")
+        hours = int(
+            (store.get("schedule_interval_hours") if store else None)
+            or context.application.bot_data["settings"].schedule_interval_hours
+        )
     else:
         try:
             hours = int(hours_raw)
         except ValueError:
             await update.message.reply_text(
-                f"❌ Interval must be a whole number of hours, got '{hours_raw}'."
+                reports.schedule_bad_interval(lang, hours_raw)
             )
             return
 
     if hours < 1:
-        await update.message.reply_text("❌ Interval must be at least 1 hour.")
+        await update.message.reply_text(reports.schedule_min_interval(lang))
         return
 
     try:
         target_id, name = _resolve_target(context, reference)
     except ValueError as exc:
-        await update.message.reply_text(f"❌ {exc}")
+        await update.message.reply_text(str(exc))
         return
 
-    database = _database(context)
-    with database.session() as session:
+    with database(context).session() as session:
         ScheduleRepository(session).upsert(target_id, profile, hours)
 
     scheduler = _scheduler(context)
@@ -167,105 +151,114 @@ async def _add(update: Update, context, args) -> None:
     if scheduler is not None:
         registered = scheduler.load_schedules()
 
-    suffix = (
-        ""
-        if scheduler is not None and scheduler.running
-        else "\n\n⚠️ Scheduler is disabled (SCHEDULE_ENABLED=false); "
-        "the schedule is saved but will not fire."
+    audit(
+        context, "schedule.add",
+        actor_id=principal.user_id, actor_username=principal.username,
+        target_type="target", target_id=name,
+        details={"profile": profile, "hours": hours},
     )
     await update.message.reply_text(
-        f"✅ Schedule saved: {name} [{profile}] every {hours}h "
-        f"({registered} active job(s)).{suffix}"
+        reports.schedule_saved(
+            lang, name, profile, hours, registered,
+            enabled=bool(scheduler is not None and scheduler.running),
+        )
     )
 
 
-async def _remove(update: Update, context, args) -> None:
+async def _remove(update, context, args, lang, principal) -> None:
     if not args:
-        await update.message.reply_text("Usage: /schedule remove <target>")
+        await update.message.reply_text("/schedule remove <target>")
         return
-
     try:
-        target_id, name = _resolve_target(context, args[0])
+        target_id, name = _resolve_target(context, args[0], lang)
     except ValueError as exc:
-        await update.message.reply_text(f"❌ {exc}")
+        await update.message.reply_text(str(exc))
         return
 
-    database = _database(context)
-    with database.session() as session:
+    with database(context).session() as session:
         removed = ScheduleRepository(session).delete_for_target(target_id)
 
     if not removed:
-        await update.message.reply_text(
-            f"❌ No schedule for '{name}'. Use /schedule add to create one."
-        )
+        await update.message.reply_text(reports.schedule_no_schedule(lang, name))
         return
 
     scheduler = _scheduler(context)
     if scheduler is not None:
         scheduler.load_schedules()
-    await update.message.reply_text(f"🗑 Schedule removed for '{name}'.")
+
+    audit(
+        context, "schedule.remove",
+        actor_id=principal.user_id, actor_username=principal.username,
+        target_type="target", target_id=name, details={},
+    )
+    await update.message.reply_text(reports.schedule_removed(lang, name))
 
 
-async def _pause(update: Update, context, args) -> None:
-    await _set_enabled(update, context, args, False)
+async def _pause(update, context, args, lang, principal) -> None:
+    await _set_enabled(update, context, args, False, lang, principal, "schedule.pause")
 
 
-async def _resume(update: Update, context, args) -> None:
-    await _set_enabled(update, context, args, True)
+async def _resume(update, context, args, lang, principal) -> None:
+    await _set_enabled(update, context, args, True, lang, principal, "schedule.resume")
 
 
-async def _set_enabled(update: Update, context, args, enabled: bool) -> None:
-    action = "resume" if enabled else "pause"
+async def _set_enabled(update, context, args, enabled, lang, principal, action) -> None:
+    verb = "resume" if enabled else "pause"
     if not args:
-        await update.message.reply_text(f"Usage: /schedule {action} <target>")
+        await update.message.reply_text(f"/schedule {verb} <target>")
         return
-
     try:
-        target_id, name = _resolve_target(context, args[0])
+        target_id, name = _resolve_target(context, args[0], lang)
     except ValueError as exc:
-        await update.message.reply_text(f"❌ {exc}")
+        await update.message.reply_text(str(exc))
         return
 
-    database = _database(context)
-    with database.session() as session:
+    with database(context).session() as session:
         row = ScheduleRepository(session).set_enabled(target_id, enabled)
 
     if row is None:
-        await update.message.reply_text(
-            f"❌ No schedule for '{name}'. Use /schedule add to create one."
-        )
+        await update.message.reply_text(reports.schedule_no_schedule(lang, name))
         return
 
     scheduler = _scheduler(context)
     if scheduler is not None:
         scheduler.load_schedules()
-    verb = "resumed" if enabled else "paused"
-    await update.message.reply_text(f"{'▶️' if enabled else '⏸'} Schedule {verb} for '{name}'.")
+
+    audit(
+        context, action,
+        actor_id=principal.user_id, actor_username=principal.username,
+        target_type="target", target_id=name,
+        details={"enabled": enabled},
+    )
+    if enabled:
+        await update.message.reply_text(reports.schedule_resumed(lang, name))
+    else:
+        await update.message.reply_text(reports.schedule_paused(lang, name))
 
 
-async def _pause_all(update: Update, context, args) -> None:
-    database = _database(context)
-    with database.session() as session:
+async def _pause_all(update, context, args, lang, principal) -> None:
+    with database(context).session() as session:
         count = ScheduleRepository(session).set_all_enabled(False)
     scheduler = _scheduler(context)
     if scheduler is not None:
         scheduler.load_schedules()
-    await update.message.reply_text(
-        f"⏸ Paused {count} schedule(s)."
-        if count
-        else "No schedules to pause."
+    audit(
+        context, "schedule.pause_all",
+        actor_id=principal.user_id, actor_username=principal.username,
+        details={"count": count},
     )
+    await update.message.reply_text(reports.schedule_pause_all(lang, count))
 
 
-async def _resume_all(update: Update, context, args) -> None:
-    database = _database(context)
-    with database.session() as session:
+async def _resume_all(update, context, args, lang, principal) -> None:
+    with database(context).session() as session:
         count = ScheduleRepository(session).set_all_enabled(True)
     scheduler = _scheduler(context)
     if scheduler is not None:
         scheduler.load_schedules()
-    await update.message.reply_text(
-        f"▶️ Resumed {count} schedule(s)."
-        if count
-        else "No schedules to resume."
+    audit(
+        context, "schedule.resume_all",
+        actor_id=principal.user_id, actor_username=principal.username,
+        details={"count": count},
     )
+    await update.message.reply_text(reports.schedule_resume_all(lang, count))

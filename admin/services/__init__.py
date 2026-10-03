@@ -1,0 +1,1 @@
+"""Admin panel service layer: auth, audit, settings, users, statistics."""

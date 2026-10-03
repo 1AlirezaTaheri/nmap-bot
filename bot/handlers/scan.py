@@ -10,7 +10,13 @@ from __future__ import annotations
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from bot.handlers.common import authenticate_or_denounce, authorizer
+from admin.services import audit as audit_service
+from bot.handlers.common import (
+    audit,
+    authenticate_or_denounce,
+    authorizer,
+    lang_of_update,
+)
 from bot.messages import reports
 from core.profiles import UnknownProfileError, get_profile, profile_names
 from core.target_manager import TargetView
@@ -29,15 +35,15 @@ def _limiter(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = lang_of_update(update, context)
+
     principal = await authenticate_or_denounce(update, context)
     if principal is None:
         return
 
     if not context.args:
         await update.message.reply_text(
-            "Usage: /scan <target|name> [profile]\n"
-            f"Profiles: {', '.join(profile_names())}\n"
-            "Example: /scan home service"
+            reports.scan_usage(lang, profile_names())
         )
         return
 
@@ -47,8 +53,7 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # and would otherwise reach the resolver and the database.
     if len(reference) > MAX_TARGET_LENGTH:
         await update.message.reply_text(
-            f"❌ Target reference too long "
-            f"({len(reference)} > {MAX_TARGET_LENGTH} characters)."
+            reports.scan_reference_too_long(lang, len(reference), MAX_TARGET_LENGTH)
         )
         return
 
@@ -61,15 +66,13 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     target: TargetView | None = _registry(context).resolve(reference)
     if target is None:
         await update.message.reply_text(
-            f"❌ Unknown target '{reference}'.\n"
-            "Register it first: /addtarget <name> <value>"
+            reports.scan_unknown_target(lang, reference)
         )
         return
 
     if len(target.value) > MAX_TARGET_LENGTH:
         await update.message.reply_text(
-            f"❌ Target value too long "
-            f"({len(target.value)} > {MAX_TARGET_LENGTH} characters)."
+            reports.scan_value_too_long(lang, len(target.value), MAX_TARGET_LENGTH)
         )
         return
 
@@ -78,7 +81,7 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         authz.require_role(principal, "start a scan")
         authz.assert_target_permitted(target.value)
     except (AuthorizationError, TargetNotAllowedError) as exc:
-        await update.message.reply_text(f"⛔ {exc}")
+        await update.message.reply_text(reports.forbidden(lang, str(exc)))
         return
 
     # Rate limit per target, checked only after authorization so a denied
@@ -86,7 +89,17 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     limiter = _limiter(context)
     decision = limiter.check(target.name)
     if not decision.allowed:
-        await update.message.reply_text(f"⏱ {decision.reason}")
+        await update.message.reply_text(reports.scan_rate_limited(lang, decision.reason))
+        audit(
+            context,
+            "scan.requested",
+            actor_id=principal.user_id,
+            actor_username=principal.username,
+            target_type="target",
+            target_id=target.name,
+            details={"result": "rate_limited", "profile": profile.name},
+            success=False,
+        )
         return
 
     worker = context.application.bot_data["scan_worker"]
@@ -97,9 +110,21 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         target_value=target.value,
         profile=profile,
         source="manual",
+        requested_by=principal.user_id,
+        lang=lang,
     )
     await worker.submit(job)
 
+    audit(
+        context,
+        "scan.requested",
+        actor_id=principal.user_id,
+        actor_username=principal.username,
+        target_type="target",
+        target_id=target.name,
+        details={"profile": profile.name, "job_id": job.job_id, "lang": lang},
+    )
+
     await update.message.reply_text(
-        reports.scan_started(target.name, target.value, profile.name)
+        reports.scan_started(lang, target.name, target.value, profile.name)
     )

@@ -16,7 +16,9 @@ services:
     restart: unless-stopped
 
   bot:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     depends_on:
       db:
         condition: service_healthy
@@ -25,19 +27,47 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://netsentinel:netsentinel@db:5432/netsentinel
     volumes:
-      # App logs, rotated by the daemon's json-file driver.
       - logs:/app/logs
-    # /health in Telegram is the operator check; this is the container-level
-    # liveness signal Docker uses to decide whether to restart.
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import sys; sys.exit(0 if __import__('os').environ.get('TELEGRAM_BOT_TOKEN') else 1)\""]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 20s
-    # SIGTERM -> tini -> python; allow time for the scheduler and worker to
-    # stop before Docker escalates to SIGKILL.
     stop_grace_period: 30s
+    restart: unless-stopped
+
+  admin:
+    build:
+      context: .
+      dockerfile: admin/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://netsentinel:netsentinel@db:5432/netsentinel
+      ADMIN_HOST: 0.0.0.0
+      ADMIN_PORT: 8080
+    ports:
+      # Bound to localhost only: the panel has no TLS of its own, so
+      # publishing it on every interface would expose admin credentials
+      # over plain HTTP. Put a reverse proxy with TLS in front for remote
+      # access, and set ADMIN_COOKIE_SECURE=true behind it.
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request,sys;
+          sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/api/health',
+          timeout=5).status == 200 else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 25s
+    stop_grace_period: 20s
     restart: unless-stopped
 
 volumes:

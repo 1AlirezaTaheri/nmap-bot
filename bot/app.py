@@ -1,18 +1,19 @@
 """Composition root for the Telegram application.
 
 Wires configuration, database, security, target registry, scan pipeline,
-the shared background worker, and the scheduler in exactly one place.
-Handlers reach shared objects through ``bot_data`` rather than importing
-globals, which keeps the wiring swappable and testable.
+the shared background worker, the scheduler, and runtime settings in one
+place. Handlers reach shared objects through ``bot_data`` rather than
+importing globals, which keeps the wiring swappable and testable.
 """
 
 from __future__ import annotations
 
 import logging
 
-from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
+from admin.services import audit as audit_service
+from admin.services.settings_store import SettingsStore, seed as seed_settings
 from bot.handlers import export as export_handlers
 from bot.handlers import ops as ops_handlers
 from bot.handlers import scan as scan_handlers
@@ -22,6 +23,7 @@ from bot.handlers import status as status_handlers
 from bot.handlers import target as target_handlers
 from bot.messages import reports
 from config.settings import Settings
+from core.i18n import normalize_lang, reload_translations
 from core.rate_limit import RateLimiter
 from core.scan_manager import ScanManager
 from core.scheduler import ScanScheduler
@@ -51,32 +53,91 @@ async def _on_scan_complete(app, job: ScanJob, outcome, error: str | None) -> No
     """Single delivery path for every scan, manual or scheduled.
 
     Scheduled jobs carry ``chat_id=0`` because they have no originating
-    conversation; those alerts go to the remembered operator chat instead.
+    conversation; those alerts go to the remembered operator chat instead,
+    in the operator's own language.
     """
     try:
+        lang = job.lang or normalize_lang(
+            app.bot_data["settings_store"].get("bot_language")
+        )
+        db = app.bot_data.get("database")
+
         if job.source == "scheduled":
-            scheduler: ScanScheduler | None = app.bot_data.get("scheduler")
+            scheduler = app.bot_data.get("scheduler")
             if outcome is None:
                 return
-            text = reports.scheduled_alert(outcome)
+            text = reports.scheduled_alert(outcome, lang)
             if text and scheduler is not None:
-                await scheduler.send_scheduled_alert(text)
+                delivered = await scheduler.send_scheduled_alert(text)
+                if db is not None:
+                    audit_service.record_standalone(
+                        db,
+                        audit_service.AuditEntry(
+                            action="scan.completed",
+                            actor_type=audit_service.ACTOR_SYSTEM,
+                            target_type="target",
+                            target_id=outcome.target_name,
+                            details={
+                                "scan_id": outcome.scan_id,
+                                "source": "scheduled",
+                                "changes": len(outcome.changes),
+                                "delivered": delivered,
+                                "lang": lang,
+                            },
+                            success=True,
+                        ),
+                    )
             return
 
         if error:
             await app.bot.send_message(
-                chat_id=job.chat_id, text=f"❌ Scan failed: {error}"
+                chat_id=job.chat_id, text=reports.scan_failed(lang, error)
             )
+            if db is not None:
+                audit_service.record_standalone(
+                    db,
+                    audit_service.AuditEntry(
+                        action="scan.failed",
+                        actor_id=job.requested_by,
+                        actor_username=job.actor_username,
+                        actor_type=audit_service.ACTOR_TELEGRAM,
+                        target_type="target",
+                        target_id=job.target_name,
+                        details={"job_id": job.job_id, "error": error},
+                        success=False,
+                    ),
+                )
             return
         if outcome is None:  # pragma: no cover - defensive
             return
 
         await app.bot.send_message(
-            chat_id=job.chat_id, text=reports.scan_completed(outcome)
+            chat_id=job.chat_id, text=reports.scan_completed(outcome, lang)
         )
-        change_text = reports.change_report(outcome)
+        change_text = reports.change_report(outcome, lang)
         if change_text:
             await _deliver(app, job.chat_id, change_text)
+
+        if db is not None:
+            audit_service.record_standalone(
+                db,
+                audit_service.AuditEntry(
+                    action="scan.completed",
+                    actor_id=job.requested_by,
+                    actor_username=job.actor_username,
+                    actor_type=audit_service.ACTOR_TELEGRAM,
+                    target_type="target",
+                    target_id=outcome.target_name,
+                    details={
+                        "scan_id": outcome.scan_id,
+                        "profile": outcome.profile,
+                        "hosts": outcome.host_count,
+                        "services": outcome.service_count,
+                        "changes": len(outcome.changes),
+                    },
+                    success=True,
+                ),
+            )
     except Exception:  # pragma: no cover - network failure
         log.exception("Failed to deliver scan result to chat %s", job.chat_id)
 
@@ -112,9 +173,7 @@ async def _post_shutdown(app) -> None:
     log.info("Shutdown complete")
 
 
-async def on_unhandled_error(
-    update: object, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def on_unhandled_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Catch-all for exceptions no handler anticipated.
 
     Without this, python-telegram-bot logs the traceback and drops it — the
@@ -131,11 +190,19 @@ async def on_unhandled_error(
     if message is None:
         return
 
+    lang = "fa"
+    try:
+        from bot.handlers.common import lang_of_update
+
+        lang = lang_of_update(update, context)
+    except Exception:  # pragma: no cover - never mask the original error
+        pass
+
     try:
         await message.reply_text(
-            "⚠️ Something went wrong: "
-            f"{type(error).__name__ if error else 'unknown error'}. "
-            "Please try again or contact the operator."
+            reports.unhandled_error(
+                lang, type(error).__name__ if error else "unknown error"
+            )
         )
     except Exception:  # pragma: no cover - reply itself failed
         log.exception("Could not deliver error notice to user")
@@ -145,6 +212,23 @@ def build_application(settings: Settings):
     """Construct and configure the ``Application``."""
     database = Database(settings.database_url)
     database.create_all()
+
+    # Settings rows must exist before anything reads them.
+    with database.session() as session:
+        seed_settings(session, actor="bootstrap")
+    settings_store = SettingsStore(database)
+
+    # Make sure every allow-listed ID is visible in the panel before
+    # anyone has run /start.
+    try:
+        from admin.services import users as user_service
+
+        user_service.sync_from_allowed(database, settings.allowed_user_ids)
+    except Exception:
+        log.warning("Could not sync allowed users", exc_info=True)
+
+    reload_translations()
+    bot_language = normalize_lang(settings_store.get("bot_language"))
 
     authenticator = Authenticator(settings)
     authorizer = Authorizer(settings.allowed_cidrs)
@@ -176,6 +260,7 @@ def build_application(settings: Settings):
 
     app.bot_data["settings"] = settings
     app.bot_data["database"] = database
+    app.bot_data["settings_store"] = settings_store
     app.bot_data["authenticator"] = authenticator
     app.bot_data["authorizer"] = authorizer
     app.bot_data["target_registry"] = registry
@@ -183,9 +268,11 @@ def build_application(settings: Settings):
     app.bot_data["scan_worker"] = worker
     app.bot_data["rate_limiter"] = rate_limiter
     app.bot_data["scheduler"] = scheduler
+    app.bot_data["bot_language"] = bot_language
 
     app.add_handler(CommandHandler("start", start_handlers.start))
     app.add_handler(CommandHandler("help", start_handlers.help_command))
+    app.add_handler(CommandHandler("tlang", start_handlers.set_language))
     app.add_handler(CommandHandler("scan", scan_handlers.scan))
     app.add_handler(CommandHandler("addtarget", target_handlers.addtarget))
     app.add_handler(CommandHandler("targets", target_handlers.listtargets))

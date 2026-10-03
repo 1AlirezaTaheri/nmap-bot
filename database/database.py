@@ -19,6 +19,7 @@ from database.models import Base
 
 def _enable_sqlite_fk(engine: Engine) -> None:
     """SQLite does not enforce foreign keys unless switched on per-connection."""
+
     @event.listens_for(engine, "connect")
     def _set_pragma(dbapi_connection, _record):  # pragma: no cover - trivial
         cursor = dbapi_connection.cursor()
@@ -35,7 +36,8 @@ class Database:
         if url.startswith("sqlite"):
             connect_args["check_same_thread"] = False
         self.engine = create_engine(
-            url, echo=echo, future=True, connect_args=connect_args
+            url, echo=echo, future=True, connect_args=connect_args,
+            pool_pre_ping=True,
         )
         if url.startswith("sqlite"):
             _enable_sqlite_fk(self.engine)
@@ -46,6 +48,10 @@ class Database:
     @property
     def session_factory(self) -> sessionmaker[Session]:
         return self._session_factory
+
+    @property
+    def url(self) -> str:
+        return self._url
 
     def create_all(self) -> None:
         Base.metadata.create_all(self.engine)

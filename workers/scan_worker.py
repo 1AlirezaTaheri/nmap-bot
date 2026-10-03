@@ -40,6 +40,12 @@ class ScanJob:
     profile: ScanProfile
     # "manual" or "scheduled" — stored on the scan row for provenance.
     source: str = "manual"
+    # Who asked. None for scheduled runs.
+    requested_by: int | None = None
+    actor_username: str | None = None
+    # Language for the completion message; None falls back to the global
+    # setting at delivery time.
+    lang: str | None = None
 
 
 @dataclass
@@ -155,6 +161,7 @@ class ScanWorker:
                         job.target_value,
                         job.profile,
                         source=job.source,
+                        requested_by=job.requested_by,
                     )
                 except Exception as exc:  # noqa: BLE001 — report, never crash
                     log.exception("Scan job %d failed", job.job_id)
