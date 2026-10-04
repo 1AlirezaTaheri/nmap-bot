@@ -72,17 +72,26 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   if (!response.ok) {
+    // Extract the server's explanation FIRST, so the 401 branch can use it
+    // too. Reporting a rejected password as "Session expired" names the
+    // cookie, the tunnel and the proxy, none of which are involved -- it
+    // sends the operator hunting for a session bug instead of retyping.
+    const detail =
+      parsed && typeof parsed === 'object' && 'detail' in parsed
+        ? String((parsed as { detail: unknown }).detail)
+        : null
+
     if (response.status === 401) {
       // The session probe opts out: its 401 means "not signed in", not
       // "signed in and then lost it".
       if (!suppressUnauthorized) onUnauthorized()
-      throw new ApiError(401, 'Session expired')
+      throw new ApiError(401, detail ?? 'Session expired')
     }
-    const detail =
-      parsed && typeof parsed === 'object' && 'detail' in parsed
-        ? String((parsed as { detail: unknown }).detail)
-        : `Request failed (${response.status})`
-    throw new ApiError(response.status, detail)
+
+    throw new ApiError(
+      response.status,
+      detail ?? `Request failed (${response.status})`,
+    )
   }
 
   return parsed as T
@@ -272,7 +281,14 @@ function toQuery(filters: object): string {
 
 export const api = {
   login: (username: string, password: string) =>
-    request<LoginResponse>('/login', { method: 'POST', body: { username, password } }),
+    request<LoginResponse>('/login', {
+      method: 'POST',
+      body: { username, password },
+      // A 401 here means the credentials were rejected, not that a session
+      // expired. Without this the handler cleared the query cache and
+      // re-navigated to the login route -- the page already being viewed.
+      suppressUnauthorized: true,
+    }),
 
   logout: () => request<{ ok: boolean }>('/logout', { method: 'POST' }),
 

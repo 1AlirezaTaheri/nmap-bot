@@ -220,7 +220,14 @@ def _mount_spa(app: FastAPI) -> None:
     log.info("Serving SPA from %s", FRONTEND_DIST)
 
 
-async def _notify_miniapp_scan(app: FastAPI, job, outcome, error):
+async def _notify_miniapp_scan(job, outcome, error):
+    # NOTE the arity: ScanWorker invokes the completion handler as
+    # `await self._on_complete(job, outcome, error)` -- three positional
+    # arguments. This used to take `app` as well, so it raised TypeError on
+    # every completed Mini App scan. The worker catches handler failures, so
+    # scans still succeeded and the breakage was only visible as a traceback
+    # in the admin log.
+    #
     """Completion sink for Mini App scans.
 
     Silently succeeds: a scan that ran and stored its results must not be
