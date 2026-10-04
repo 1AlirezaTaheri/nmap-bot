@@ -413,13 +413,12 @@ export function Label({
   return <label className={cn('label', className)} {...props} />
 }
 
-export function Input({
-  className,
-  type = 'text',
-  ...props
-}: React.InputHTMLAttributes<HTMLInputElement>): JSX.Element {
-  return <input type={type} className={cn('input', className)} {...props} />
-}
+export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
+  ({ className, type = 'text', ...props }, ref) => (
+    <input ref={ref} type={type} className={cn('input', className)} {...props} />
+  ),
+)
+Input.displayName = 'Input'
 
 export function FieldError({ children }: { children?: string }): JSX.Element | null {
   if (!children) return null

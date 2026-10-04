@@ -24,11 +24,25 @@ export function LoginPage(): JSX.Element {
   const {
     register,
     handleSubmit,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: { username: '', password: '' },
   })
+
+  /**
+   * Autofill and password managers can populate an input without emitting the
+   * React `onChange` react-hook-form subscribes to, which leaves the form state
+   * empty while the fields look filled. Re-read the live DOM values right before
+   * validation so we validate what the user actually sees.
+   */
+  function syncVisibleValues(): void {
+    const username = document.getElementById('username')
+    const password = document.getElementById('password')
+    if (username instanceof HTMLInputElement) setValue('username', username.value)
+    if (password instanceof HTMLInputElement) setValue('password', password.value)
+  }
 
   async function onSubmit(values: FormValues): Promise<void> {
     setServerError(null)
@@ -70,6 +84,7 @@ export function LoginPage(): JSX.Element {
 
         <form
           onSubmit={(event) => {
+            syncVisibleValues()
             void handleSubmit(onSubmit)(event)
           }}
           className="card space-y-4 bg-surface/70 p-6 backdrop-blur-xl"
