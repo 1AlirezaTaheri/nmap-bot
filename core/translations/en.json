@@ -1,9 +1,7 @@
 {
   "lang.name": "English",
-
   "start.greeting": "Hello! I am NetSentinel — your network security monitoring assistant.\nKnow what changed, and what deserves your attention.",
   "start.hint": "Send /help to get started.",
-
   "help.title": "All commands",
   "help.profiles": "Scan profiles:",
   "help.role": "Your role: {role}",
@@ -19,21 +17,17 @@
   "help.cmd.export": "/export <target> [json|csv]",
   "help.cmd.report": "/report <target>",
   "help.cmd.schedule": "/schedule list|add|remove|pause|resume",
-
   "auth.denied": "⛔ Not recognised. Access is limited to authorised users.\nIf you are the operator, add your numeric user ID to ALLOWED_USER_IDS and restart the bot.",
   "auth.disabled": "⛔ Your account has been disabled. Please contact the operator.",
   "auth.forbidden": "⛔ {error}",
-
   "scan.usage": "Usage: /scan <target|name> [profile]\nProfiles: {profiles}\nExample: /scan home service",
   "scan.ref_too_long": "❌ Target reference too long ({length} > {max} characters).",
   "scan.value_too_long": "❌ Target value too long ({length} > {max} characters).",
   "scan.unknown_target": "❌ Unknown target '{target}'.\nRegister it first: /addtarget <name> <value>",
   "scan.rate_limited": "⏱ {reason}",
   "scan.started": "🔍 Scan Started\nTarget: {target} ({value})\nProfile: {profile}\nStatus: Running…",
-
   "scan.completed": "✅ Scan Completed\nTarget: {target} ({value})\nProfile: {profile}\nHosts discovered: {hosts}\nOpen services: {services}\nDuration: {duration}\nScan ID: {scan_id}",
   "scan.failed": "❌ Scan failed: {error}",
-
   "change.header": "🚨 NETWORK CHANGES DETECTED",
   "change.header_first": "ℹ️ Baseline scan recorded (first scan)",
   "change.new_host": "New host: {host}",
@@ -44,10 +38,8 @@
   "change.more": "… and {count} more change(s)",
   "change.summary": "Summary: {summary}",
   "change.previous_scan": "Previous scan: {scan_id}",
-
   "scheduled.unchanged": "⏰ Scheduled check — no changes\nTarget: {target} ({value})\nHosts: {hosts}  Services: {services}",
   "scheduled.no_operator": "⚠️ No operator chat recorded; the scheduled alert was not sent.",
-
   "target.usage_add": "Usage: /addtarget <name> <value> [group]\nExample: /addtarget home 192.168.174.0/24 core",
   "target.usage_del": "Usage: /deltarget <name>",
   "target.name_required": "Target name is required.",
@@ -65,11 +57,9 @@
   "target.deleted": "🗑 Target '{name}' removed.",
   "target.not_found": "❌ No target named '{name}'.",
   "target.delete_blocked": "⛔ {error}",
-
   "purge.usage": "Usage: /purge <name> confirm\n⚠️ This deletes the target and ALL of its scan history.",
   "purge.confirm_prompt": "⚠️ This will permanently delete target '{name}' ({value}) and its history:\n  • {scans} scan(s)\n  • {hosts} host(s)\n  • {services} service(s)\n  • {changes} change event(s)\n  • {schedules} schedule(s)\n\nTo proceed: {command}",
   "purge.done": "🗑 Purged '{name}':\n  • {scans} scan(s)\n  • {hosts} host(s)\n  • {services} service(s)\n  • {changes} change event(s)\n  • {schedules} schedule(s)\n  • 1 target",
-
   "schedule.usage": "⏱ Scheduled monitoring\n/schedule list — show all schedules\n/schedule add <target> <profile> <hours>\n/schedule remove <target>\n/schedule pause <target>\n/schedule resume <target>\n/schedule pause-all\n/schedule resume-all",
   "schedule.unknown": "❌ Unknown subcommand '{subcommand}'.\n\n{usage}",
   "schedule.saved": "✅ Schedule saved: {name} [{profile}] every {hours}h ({jobs} active job(s)).{suffix}",
@@ -91,16 +81,13 @@
   "schedule.list_item": "{icon} {name} [{profile}] every {hours}h\n     next: {next}   last: {last}",
   "schedule.list_not_running": "\n\n(Scheduler is not running — SCHEDULE_ENABLED=false)",
   "schedule.never": "never",
-
   "history.empty": "No scans recorded yet.",
   "history.header": "Scan history:",
   "history.usage": "Usage: /scans <target> — show history for a target",
   "history.unknown_target": "❌ Unknown target '{target}'.",
-
   "status.empty": "No active scans.",
   "status.header": "Active scans:",
   "status.item": "{icon} #{job_id} {target} [{profile}] {state}{detail}{scheduled}",
-
   "health.title": "🩺 NetSentinel health",
   "health.db_ok": "  database    : ✅ reachable",
   "health.db_fail": "  database    : ❌ {error}",
@@ -111,7 +98,6 @@
   "health.last_scan": "  last successful scan per target:",
   "health.none": "    (none)",
   "health.item": "    • {target} — {finished}",
-
   "cleanup.title": "🧹 Cleanup complete",
   "cleanup.targets": "  targets checked : {targets}",
   "cleanup.scans": "  scans deleted   : {scans}",
@@ -120,14 +106,12 @@
   "cleanup.changes": "  change events   : {changes}",
   "cleanup.total": "  total rows      : {total}",
   "cleanup.policy": "  policy          : keep {days}d, max {max}/target",
-
   "export.usage": "Usage: /export <target> [format]\nFormats: {formats} (default json)",
   "export.bad_format": "❌ Unsupported format '{format}'.\nSupported: {formats}",
   "export.unknown_target": "❌ No target named '{target}'.\nRegister it first with /addtarget.",
   "export.no_scans": "❌ No scans recorded for '{target}' yet.\nRun /scan {target} first.",
   "export.caption": "📦 Export of '{target}' — {scans} scan(s), format {format}",
   "export.too_large": "❌ Export too large ({size} KB). Try a smaller EXPORT_MAX_SCANS (currently {max}).",
-
   "report.usage": "Usage: /report <target>\nShows the last {days} days.",
   "report.unknown_target": "❌ No target named '{target}'.",
   "report.title": "📊 Report — {target}",
@@ -146,11 +130,11 @@
   "report.top_hosts": "── Top changed hosts ──",
   "report.no_changes": "  (no change events recorded)",
   "report.no_hosts": "  (none)",
-
   "error.unhandled": "⚠️ Something went wrong: {error}.\nPlease try again or contact the operator.",
   "error.handler_failed": "⚠️ {action} failed: {error}.\nThe operator should check the bot logs.",
   "error.purge_failed": "⚠️ Purge failed for '{target}': {error}.\nNothing was deleted — the operator should check the bot logs.",
   "error.cleanup_failed": "⚠️ Cleanup failed: {error}.\nNothing was deleted — the operator should check the bot logs.",
   "error.delete_failed": "⚠️ Could not delete '{target}': {error}.\nThe operator should check the bot logs.",
-  "error.rate_limited": "⏱ {reason}"
+  "error.rate_limited": "⏱ {reason}",
+  "scan.blocked_by_rule": "🚫 Scan blocked by policy\n  reason : {reason}\n  rule   : {rule}"
 }

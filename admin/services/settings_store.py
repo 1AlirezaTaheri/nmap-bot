@@ -40,6 +40,21 @@ SETTING_SPECS: dict[str, tuple[Any, str, str]] = {
     "max_concurrent_scans": (2, "int:1:16", "Worker concurrency"),
     "export_max_scans": (20, "int:1:500", "Scans per /export"),
     "allowed_cidrs": ("", "str", "Comma-separated CIDRs scans may target"),
+    "rules_enabled": (
+        True,
+        "bool",
+        "Evaluate policy rules before every scan",
+    ),
+    "rules_default_action": (
+        "allow",
+        "choice:allow,deny",
+        "Reserved for a future global gate; informational for now",
+    ),
+    "rules_max_hits_per_day": (
+        10000,
+        "int:100:1000000",
+        "Stop recording rule hits past this many per day",
+    ),
 }
 
 

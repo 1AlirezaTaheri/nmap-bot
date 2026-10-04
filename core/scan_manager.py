@@ -51,6 +51,7 @@ class ScanManager:
         profile: ScanProfile,
         source: str = "manual",
         requested_by: int | None = None,
+        scan_timeout: int | None = None,
     ) -> ScanOutcome:
         """Run one scan end-to-end and persist the result.
 
@@ -60,6 +61,11 @@ class ScanManager:
         ``source`` records provenance ("manual" / "scheduled") and
         ``requested_by`` the Telegram id behind it, so the panel can show
         per-user scan counts and attribute history.
+
+        ``scan_timeout`` is the value the rule engine resolved for this
+        request; None means "use the configured timeout". It is threaded
+        straight to the runner, so the rule that tightened the ceiling is
+        the rule that took effect.
         """
         # Commit the "running" row first, so a crash mid-scan still leaves
         # a durable record instead of losing the attempt entirely.
@@ -84,7 +90,11 @@ class ScanManager:
             scan = scans.get(scan_id)
 
             try:
-                result = self._runner.run(target_value, list(profile.args))
+                result = self._runner.run(
+                    target_value,
+                    list(profile.args),
+                    timeout=scan_timeout,
+                )
                 parsed = xml_parser.parse(result.xml)
                 snapshot = normalizer.normalize(parsed)
             except Exception as exc:

@@ -1,9 +1,7 @@
 {
   "lang.name": "فارسی",
-
   "start.greeting": "سلام! من NetSentinel هستم — دستیار پایش امنیت شبکه.\nKnow what changed, and what deserves your attention.",
   "start.hint": "برای شروع /help را بزنید.",
-
   "help.title": "همه دستورات",
   "help.profiles": "پروفایل‌های اسکن:",
   "help.role": "نقش شما: {role}",
@@ -19,21 +17,17 @@
   "help.cmd.export": "/export <target> [json|csv]",
   "help.cmd.report": "/report <target>",
   "help.cmd.schedule": "/schedule list|add|remove|pause|resume",
-
   "auth.denied": "⛔ شناسایی نشدید. دسترسی فقط برای کاربران مجاز است.\nاگر اپراتور هستید، شناسه عددی خود را در ALLOWED_USER_IDS قرار دهید و ربات را ری‌استارت کنید.",
   "auth.disabled": "⛔ حساب شما غیرفعال شده است. با اپراتور تماس بگیرید.",
   "auth.forbidden": "⛔ {error}",
-
   "scan.usage": "Usage: /scan <target|name> [profile]\nپروفایل‌ها: {profiles}\nمثال: /scan home service",
   "scan.ref_too_long": "❌ مرجع هدف خیلی بلند است ({length} > {max} کاراکتر).",
   "scan.value_too_long": "❌ طول مقدار هدف بیش از حد مجاز است ({length} > {max} کاراکتر).",
   "scan.unknown_target": "❌ هدف ناشناخته «{target}».\nابتدا ثبت کنید: /addtarget <name> <value>",
   "scan.rate_limited": "⏱ {reason}",
   "scan.started": "🔍 اسکن آغاز شد\nهدف: {target} ({value})\nپروفایل: {profile}\nوضعیت: در حال اجرا…",
-
   "scan.completed": "✅ اسکن کامل شد\nهدف: {target} ({value})\nپروفایل: {profile}\nمیزبان‌های یافت‌شده: {hosts}\nسرویس‌های باز: {services}\nمدت: {duration}\nشناسه: {scan_id}",
   "scan.failed": "❌ اسکن ناموفق بود: {error}",
-
   "change.header": "🚨 تغییرات شبکه شناسایی شد",
   "change.header_first": "ℹ️ اسکن پایه ثبت شد (اولین اسکن)",
   "change.new_host": "میزبان جدید: {host}",
@@ -44,10 +38,8 @@
   "change.more": "… و {count} تغییر دیگر",
   "change.summary": "خلاصه: {summary}",
   "change.previous_scan": "اسکن قبلی: {scan_id}",
-
   "scheduled.unchanged": "⏰ بررسی زمان‌بندی‌شده — بدون تغییر\nهدف: {target} ({value})\nمیزبان: {hosts}  سرویس: {services}",
   "scheduled.no_operator": "⚠️ هیچ چت اپراتوری ثبت نشده است؛ هشدار زمان‌بندی‌شده ارسال نشد.",
-
   "target.usage_add": "Usage: /addtarget <name> <value> [group]\nمثال: /addtarget home 192.168.174.0/24 core",
   "target.usage_del": "Usage: /deltarget <name>",
   "target.name_required": "نام هدف الزامی است.",
@@ -65,11 +57,9 @@
   "target.deleted": "🗑 هدف «{name}» حذف شد.",
   "target.not_found": "❌ هدفی با نام «{name}» یافت نشد.",
   "target.delete_blocked": "⛔ {error}",
-
   "purge.usage": "Usage: /purge <name> confirm\n⚠️ این کار هدف و تمام تاریخچهٔ اسکن آن را حذف می‌کند.",
   "purge.confirm_prompt": "⚠️ این کار هدف «{name}» ({value}) و تاریخچهٔ آن را برای همیشه حذف می‌کند:\n  • {scans} اسکن\n  • {hosts} میزبان\n  • {services} سرویس\n  • {changes} رویداد تغییر\n  • {schedules} زمان‌بندی\n\nبرای ادامه: {command}",
   "purge.done": "🗑 «{name}» پاک شد:\n  • {scans} اسکن\n  • {hosts} میزبان\n  • {services} سرویس\n  • {changes} رویداد تغییر\n  • {schedules} زمان‌بندی\n  • ۱ هدف",
-
   "schedule.usage": "⏱ پایش زمان‌بندی‌شده\n/schedule list — فهرست زمان‌بندی‌ها\n/schedule add <target> <profile> <hours>\n/schedule remove <target>\n/schedule pause <target>\n/schedule resume <target>\n/schedule pause-all\n/schedule resume-all",
   "schedule.unknown": "❌ زیرفرمان ناشناخته «{subcommand}».\n\n{usage}",
   "schedule.saved": "✅ زمان‌بندی ذخیره شد: {name} [{profile}] هر {hours} ساعت ({jobs} کار فعال).{suffix}",
@@ -91,16 +81,13 @@
   "schedule.list_item": "{icon} {name} [{profile}] هر {hours} ساعت\n     بعدی: {next}   آخرین: {last}",
   "schedule.list_not_running": "\n\n(زمان‌بند اجرا نمی‌شود — SCHEDULE_ENABLED=false)",
   "schedule.never": "هرگز",
-
   "history.empty": "هنوز اسکنی ثبت نشده است.",
   "history.header": "تاریخچهٔ اسکن:",
   "history.usage": "Usage: /scans <target> — تاریخچهٔ یک هدف",
   "history.unknown_target": "❌ هدف ناشناخته «{target}».",
-
   "status.empty": "اسکن فعالی وجود ندارد.",
   "status.header": "اسکن‌های فعال:",
   "status.item": "{icon} #{job_id} {target} [{profile}] {state}{detail}{scheduled}",
-
   "health.title": "🩺 سلامت NetSentinel",
   "health.db_ok": "  پایگاه داده  : ✅ در دسترس",
   "health.db_fail": "  پایگاه داده  : ❌ {error}",
@@ -111,7 +98,6 @@
   "health.last_scan": "  آخرین اسکن موفق هر هدف:",
   "health.none": "    (هیچ)",
   "health.item": "    • {target} — {finished}",
-
   "cleanup.title": "🧹 پاک‌سازی کامل شد",
   "cleanup.targets": "  اهداف بررسی‌شده : {targets}",
   "cleanup.scans": "  اسکن‌های حذف‌شده  : {scans}",
@@ -120,14 +106,12 @@
   "cleanup.changes": "  رویداد تغییر   : {changes}",
   "cleanup.total": "  مجموع ردیف‌ها   : {total}",
   "cleanup.policy": "  سیاست          : نگهداری {days} روز، حداکثر {max} در هر هدف",
-
   "export.usage": "Usage: /export <target> [format]\nقالب‌ها: {formats} (پیش‌فرض json)",
   "export.bad_format": "❌ قالب «{format}» پشتیبانی نمی‌شود.\nپشتیبانی‌شده: {formats}",
   "export.unknown_target": "❌ هدفی با نام «{target}» ثبت نشده است.\nابتدا با /addtarget ثبت کنید.",
   "export.no_scans": "❌ هنوز اسکنی برای «{target}» ثبت نشده.\nابتدا /scan {target} را اجرا کنید.",
   "export.caption": "📦 خروجی «{target}» — {scans} اسکن، قالب {format}",
   "export.too_large": "❌ حجم خروجی بیش از حد است ({size} KB). EXPORT_MAX_SCANS را کمتر کنید (فعلی {max}).",
-
   "report.usage": "Usage: /report <target>\nگزارش {days} روز اخیر.",
   "report.unknown_target": "❌ هدفی با نام «{target}» یافت نشد.",
   "report.title": "📊 گزارش — {target}",
@@ -146,11 +130,11 @@
   "report.top_hosts": "── پرتغییرترین میزبان‌ها ──",
   "report.no_changes": "  (رویداد تغییری ثبت نشده)",
   "report.no_hosts": "  (هیچ)",
-
   "error.unhandled": "⚠️ مشکلی پیش آمد: {error}.\nلطفاً دوباره تلاش کنید یا با اپراتور تماس بگیرید.",
   "error.handler_failed": "⚠️ انجام {action} ممکن نشد: {error}.\nاپراتور باید لاگ‌ها را بررسی کند.",
   "error.purge_failed": "⚠️ حذف «{target}» ناموفق بود: {error}.\nهیچ داده‌ای حذف نشد — اپراتور باید لاگ‌ها را بررسی کند.",
   "error.cleanup_failed": "⚠� پاک‌سازی ناموفق بود: {error}.\nهیچ داده‌ای حذف نشد — اپراتور باید لاگ‌ها را بررسی کند.",
   "error.delete_failed": "⚠️ حذف «{target}» ممکن نشد: {error}.\nاپراتور باید لاگ‌ها را بررسی کند.",
-  "error.rate_limited": "⏱ {reason}"
+  "error.rate_limited": "⏱ {reason}",
+  "scan.blocked_by_rule": "🚫 اسکن توسط سیاست مسدود شد\n  دلیل : {reason}\n  قانون: {rule}"
 }

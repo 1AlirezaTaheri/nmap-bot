@@ -46,6 +46,9 @@ class ScanJob:
     # Language for the completion message; None falls back to the global
     # setting at delivery time.
     lang: str | None = None
+    # Per-job nmap timeout resolved by the rule engine. None means the
+    # runner's configured default applies.
+    scan_timeout: int | None = None
 
 
 @dataclass
@@ -162,6 +165,7 @@ class ScanWorker:
                         job.profile,
                         source=job.source,
                         requested_by=job.requested_by,
+                        scan_timeout=job.scan_timeout,
                     )
                 except Exception as exc:  # noqa: BLE001 — report, never crash
                     log.exception("Scan job %d failed", job.job_id)

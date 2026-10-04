@@ -127,6 +127,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(api.router, prefix="/api")
 
+    # Routers with a single responsibility, still under /api.
+    from admin.routes import rule_hits, rules
+
+    app.include_router(rules.router, prefix="/api/rules")
+    app.include_router(rule_hits.router, prefix="/api/rule-hits")
+
     _mount_spa(app)
 
     @app.exception_handler(500)

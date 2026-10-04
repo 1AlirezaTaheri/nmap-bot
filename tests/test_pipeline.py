@@ -40,7 +40,9 @@ class FakeRunner:
         self.queue: list[str] = []
         self.calls: list[tuple[str, list[str]]] = []
 
-    def run(self, target: str, args: list[str]):
+    def run(
+        self, target: str, args: list[str], *, timeout: int | None = None
+    ):
         self.calls.append((target, args))
         if not self.queue:
             raise AssertionError("FakeRunner queue empty")
@@ -147,7 +149,7 @@ class TestScanManagerPipeline:
 
     def test_failed_nmap_marks_scan_failed(self, db):
         class Boom:
-            def run(self, target, args):
+            def run(self, target, args, *, timeout=None):
                 raise NmapXmlError("bad xml")
 
         manager = ScanManager(db, Boom())

@@ -83,8 +83,15 @@ class RuleContext:
     reading them from the database would break purity.
     """
 
-    #: The scan target: an address, a CIDR, or a hostname.
+    #: The scan target: an address, a CIDR, or a hostname. CIDR and domain
+    #: matching both operate on this value.
     target: str
+    #: Key a ``rate_limit`` is tracked under. Defaults to ``target``, which
+    #: is right for a standalone caller. The bot overrides it with the
+    #: target *name*, because the existing RateLimiter is keyed by name and
+    #: a rule limit is meant to shadow that limiter rather than run beside
+    #: it counting a different thing.
+    target_key: str | None = None
     #: Telegram user id of the requester, or None for a scheduled run.
     actor_id: int | None = None
     #: Ports the scan will probe. Port rules only apply when this is set.
@@ -102,6 +109,10 @@ class RuleContext:
 
     def resolved_now(self) -> datetime:
         return self.now or datetime.now(timezone.utc)
+
+    def rate_key(self) -> str:
+        """The value a per-target rate limit is keyed by."""
+        return self.target_key or self.target
 
 
 @dataclass(frozen=True)
@@ -134,10 +145,13 @@ def rate_limit_key(ctx: RuleContext, scope: str, scope_id: str | None) -> str:
     A ``user``-scoped limit is tracked per user; ``target`` and ``global``
     are both per target, because the existing rate limiter is keyed by target
     name and a global rule simply applies the same value to every target.
+
+    Callers that supply ``last_scans`` must build their keys with this same
+    function. Hand-writing an f-string here is how the two sides drift apart.
     """
     if scope == "user":
         return f"user:{scope_id}"
-    return f"target:{ctx.target}"
+    return f"target:{ctx.rate_key()}"
 
 
 # ---------------------------------------------------------------------------

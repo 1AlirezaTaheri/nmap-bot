@@ -108,6 +108,17 @@ def scan_rate_limited(lang: str, reason: str) -> str:
     return t("scan.rate_limited", lang, reason=reason)
 
 
+def scan_blocked_by_rule(
+    lang: str, reason: str, rule_name: str | None = None
+) -> str:
+    """A scan refused by policy. ``rule_name`` is shown when known so the
+    operator can go change that rule rather than guess.
+    """
+    return t(
+        "scan.blocked_by_rule", lang, reason=reason, rule=rule_name or "-"
+    )
+
+
 def scan_started(lang: str, target: str, value: str, profile: str) -> str:
     return t(
         "scan.started", lang,

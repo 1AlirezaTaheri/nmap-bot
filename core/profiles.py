@@ -19,6 +19,21 @@ class ScanProfile:
     name: str
     description: str
     args: tuple[str, ...]
+    # Ports this profile will probe, when they can be enumerated.
+    #
+    # None means "nmap decides": the shipped profiles use -F and
+    # --top-ports, which resolve to nmap's own port tables at run
+    # time. Hardcoding a copy of those tables here would go stale
+    # the moment nmap updates them, so the honest answer is that the
+    # port list is unknown — and an unknown port list means port
+    # rules cannot be evaluated (see core.rules). A profile that
+    # declares an explicit -p list sets this, and port rules then
+    # apply to it.
+    ports: tuple[int, ...] | None = None
+
+    def port_list(self) -> tuple[int, ...]:
+        """Ports the rule engine can be told about."""
+        return self.ports or ()
 
 
 # Fixed catalogs — no user input ever reaches the argument list.

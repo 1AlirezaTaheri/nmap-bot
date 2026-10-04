@@ -48,6 +48,13 @@ ACTIONS = (
     "retention.run",
     "export.run",
     "report.run",
+    "rule.create",
+    "rule.update",
+    "rule.delete",
+    "rule.reorder",
+    "rule.import",
+    "rule.denied",
+    "rule.hit_cap",
 )
 
 ACTOR_ADMIN = "admin"

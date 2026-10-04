@@ -390,6 +390,46 @@ class Rule(Base):
         DateTime, nullable=True
     )
 
+class RuleHit(Base):
+    """One rule evaluation that produced a hit.
+
+    A row is written only when a rule actually decided the outcome — a
+    request that no rule touched leaves nothing, so the table answers "what
+    did this rule set actually do?" rather than recording every scan.
+
+    ``rule_id`` is deliberately *not* a foreign key. Rules are deletable from
+    the panel, and a cascade would silently erase the history that explains
+    why past scans were allowed or refused; a hard FK would instead make the
+    rule undeletable. Losing the link is the lesser problem, and
+    ``list_rule_hits`` tolerates hits whose rule is gone.
+    """
+
+    __tablename__ = "rule_hits"
+    __table_args__ = (
+        # Per-rule history view in the panel.
+        Index("ix_rule_hits_rule_created", "rule_id", "created_at"),
+        # The retention sweep deletes by created_at alone.
+        Index("ix_rule_hits_created_at", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rule_id: Mapped[int] = mapped_column(Integer, index=True)
+    # BigInteger: Telegram ids overflow 32-bit INTEGER.
+    scan_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    target: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # "allow" or "deny".
+    decision: Mapped[str] = mapped_column(String(16), index=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    actor_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    actor_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+
 
 # Canonical change_type vocabulary — keep in sync with core/change_detector.
 CHANGE_TYPES = (
@@ -426,3 +466,6 @@ RULE_TYPES = (
 
 # Canonical rule scope vocabulary. scope_id is unused when global.
 RULE_SCOPES = ("global", "user", "target")
+
+# Canonical rule-hit decision vocabulary.
+RULE_DECISIONS = ("allow", "deny")

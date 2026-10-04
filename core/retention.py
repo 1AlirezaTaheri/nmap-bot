@@ -10,12 +10,17 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete
 
 from database.database import Database
 from database.models import ChangeEvent, Host, Scan, Service
-from database.repository import ScanRepository, TargetRepository
+from database.repository import (
+    RuleRepository,
+    ScanRepository,
+    TargetRepository,
+)
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +32,10 @@ class RetentionReport:
     hosts_deleted: int = 0
     services_deleted: int = 0
     change_events_deleted: int = 0
+    # Rule hits are pruned on the same schedule. The rules themselves are
+    # never deleted: a rule outliving its own history would leave the
+    # surviving hit rows unexplainable.
+    rule_hits_deleted: int = 0
 
     @property
     def total_rows(self) -> int:
@@ -35,6 +44,7 @@ class RetentionReport:
             + self.hosts_deleted
             + self.services_deleted
             + self.change_events_deleted
+            + self.rule_hits_deleted
         )
 
     def text(self) -> str:
@@ -45,6 +55,7 @@ class RetentionReport:
             f"  hosts deleted   : {self.hosts_deleted}\n"
             f"  services deleted: {self.services_deleted}\n"
             f"  change events   : {self.change_events_deleted}\n"
+            f"  rule hits       : {self.rule_hits_deleted}\n"
             f"  total rows      : {self.total_rows}"
         )
 
@@ -101,10 +112,23 @@ class RetentionService:
 
             report.targets_scanned += 1
 
+        # Rule hits carry no foreign keys, so there is no ordering to
+        # respect; they are pruned in their own transaction once the
+        # per-target passes are done.
+        with self._db.session() as session:
+            report.rule_hits_deleted = RuleRepository(
+                session
+            ).purge_rule_hits(
+                datetime.now(timezone.utc).replace(tzinfo=None)
+                - timedelta(days=keep_days)
+            )
+
         log.info(
-            "Retention: %d target(s), deleted %d scan(s), %d row(s) total",
+            "Retention: %d target(s), deleted %d scan(s), "
+            "%d rule hit(s), %d row(s) total",
             report.targets_scanned,
             report.scans_deleted,
+            report.rule_hits_deleted,
             report.total_rows,
         )
         return report

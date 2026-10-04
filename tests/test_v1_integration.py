@@ -45,7 +45,7 @@ class StubRunner:
         self.queue = []
         self.calls = []
 
-    def run(self, target, args):
+    def run(self, target, args, *, timeout=None):
         self.calls.append((target, list(args)))
         if not self.queue:
             raise AssertionError("StubRunner queue empty")

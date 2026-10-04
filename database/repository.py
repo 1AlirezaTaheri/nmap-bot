@@ -7,16 +7,21 @@ database with no stubbing.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
+from core.rule_values import validate_value
 from database.models import (
     ChangeEvent,
     Host,
     OperatorChat,
+    Rule,
+    RuleHit,
     Scan,
     Schedule,
     Service,
@@ -453,6 +458,40 @@ class ScanRepository:
                 )
         self._s.flush()
 
+    def count_since(self, user_id: int, cutoff: datetime) -> int:
+        """Scans started by ``user_id`` at or after ``cutoff``.
+
+        Backs the ``user_quota`` rule, which counts scans per hour or
+        per day. ``requested_by`` is indexed-friendly here because it
+        doubles as the actor filter for quota accounting.
+        """
+        return int(
+            self._s.scalar(
+                select(func.count())
+                .select_from(Scan)
+                .where(
+                    Scan.requested_by == user_id,
+                    Scan.started_at >= cutoff,
+                )
+            )
+            or 0
+        )
+
+    def latest_started_for_target_name(self, target_name: str) -> datetime | None:
+        """When this target was last scanned, by name.
+
+        The rate limiter keys on target *name*, so the rule context has
+        to match: a rule limiting a target must see the same history the
+        limiter sees.
+        """
+        return self._s.scalar(
+            select(Scan.started_at)
+            .join(Target, Scan.target_id == Target.id)
+            .where(Target.name == target_name)
+            .order_by(desc(Scan.started_at))
+            .limit(1)
+        )
+
     # ---- retention (V1) -------------------------------------------
     def deletable_ids(
         self,
@@ -692,3 +731,394 @@ class OperatorChatRepository:
 
     def list(self) -> list[OperatorChat]:
         return list(self._s.scalars(select(OperatorChat).order_by(OperatorChat.id)))
+
+
+# ---------------------------------------------------------------------------
+# Policy rules (V3)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RuleFilters:
+    """Optional narrowing for :meth:`RuleRepository.list_rules`.
+
+    Every field unset means "no filter". ``q`` is a case-insensitive
+    substring match on the name.
+    """
+
+    rule_type: str | None = None
+    enabled: bool | None = None
+    scope: str | None = None
+    q: str | None = None
+
+
+@dataclass
+class RuleCreate:
+    """A new rule. ``value`` is normalized before storage."""
+
+    name: str
+    rule_type: str
+    value: str
+    priority: int = 50
+    enabled: bool = True
+    scope: str = "global"
+    scope_id: str | None = None
+    description: str | None = None
+
+
+@dataclass
+class RuleUpdate:
+    """A partial update.
+
+    Every field is ``None`` when absent, so an omitted key never overwrites a
+    stored value with a default. ``name`` is intentionally *not* editable
+    here: hits reference rules by id but display names, and a rename would
+    make historical hits read differently than they did when written.
+    """
+
+    rule_type: str | None = None
+    value: str | None = None
+    priority: int | None = None
+    enabled: bool | None = None
+    scope: str | None = None
+    scope_id: str | None = None
+    description: str | None = None
+
+
+@dataclass
+class RuleHitFilters:
+    rule_id: int | None = None
+    decision: str | None = None
+    actor_id: int | None = None
+    target: str | None = None
+    since: datetime | None = None
+    until: datetime | None = None
+    page: int = 1
+    page_size: int = 50
+
+
+class RuleRepository:
+    """CRUD and queries for policy rules and their hit history.
+
+    Value validation is delegated to :mod:`core.rule_values` so there is
+    exactly one parser; this layer owns persistence and naming policy only.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    # -- reads --------------------------------------------------------
+    def list_rules(self, filters: RuleFilters | None = None) -> list[Rule]:
+        """All rules matching ``filters``, in evaluation order.
+
+        Ordered by (priority, id) so the listing shows rules the way the
+        engine will apply them, which is the only ordering that matters to
+        whoever is editing them.
+        """
+        stmt = select(Rule)
+        if filters is not None:
+            if filters.rule_type:
+                stmt = stmt.where(Rule.rule_type == filters.rule_type)
+            if filters.enabled is not None:
+                stmt = stmt.where(Rule.enabled.is_(filters.enabled))
+            if filters.scope:
+                stmt = stmt.where(Rule.scope == filters.scope)
+            if filters.q:
+                # Substring, case-insensitive. `contains` is portable across
+                # SQLite and PostgreSQL; `ilike` is not.
+                stmt = stmt.where(Rule.name.contains(filters.q))
+        return list(
+            self._s.scalars(stmt.order_by(Rule.priority, Rule.id))
+        )
+
+    def get_rule(self, rule_id: int) -> Rule | None:
+        return self._s.get(Rule, rule_id)
+
+    def get_by_name(self, name: str) -> Rule | None:
+        return self._s.scalar(select(Rule).where(Rule.name == name))
+
+    def load_engine_rules(self) -> list[Rule]:
+        """Enabled rules, in evaluation order.
+
+        The hot path: the bot calls this once per scan. It deliberately does
+        no eager-loading or joining — the engine reads only scalar columns —
+        and it does not filter by scope, because scope matching depends on
+        the request and belongs to the engine.
+        """
+        return list(
+            self._s.scalars(
+                select(Rule)
+                .where(Rule.enabled.is_(True))
+                .order_by(Rule.priority, Rule.id)
+            )
+        )
+
+    def count_enabled(self) -> int:
+        return int(
+            self._s.scalar(
+                select(func.count())
+                .select_from(Rule)
+                .where(Rule.enabled.is_(True))
+            )
+            or 0
+        )
+
+    # -- writes -------------------------------------------------------
+    def create_rule(self, data: RuleCreate, actor: str) -> Rule:
+        """Create a rule, normalizing ``data.value`` first.
+
+        Raises :class:`RepositoryError` for an unknown type or a malformed
+        value (the caller maps that to 400) and for a duplicate name, which
+        the database rejects and this translates to a 409.
+        """
+        normalized = _normalize(data.rule_type, data.value)
+
+        row = Rule(
+            name=data.name,
+            rule_type=data.rule_type,
+            value=normalized,
+            priority=data.priority,
+            enabled=data.enabled,
+            scope=data.scope,
+            scope_id=data.scope_id,
+            description=data.description,
+            created_by=actor,
+        )
+        # SAVEPOINT, not a bare flush: a duplicate name must undo only this
+        # statement. A session-wide rollback would discard rules the caller
+        # had already written in this transaction, which matters because
+        # import writes many in one session.
+        try:
+            with self._s.begin_nested():
+                self._s.add(row)
+                self._s.flush()
+        except IntegrityError as exc:
+            raise RepositoryError(
+                f"Rule '{data.name}' already exists."
+            ) from exc
+        return row
+
+    def update_rule(
+        self, rule_id: int, patch: RuleUpdate, actor: str
+    ) -> Rule:
+        """Apply a partial update and stamp ``updated_at``.
+
+        ``actor`` is accepted for symmetry with create and for future
+        per-field attribution; it is not persisted, because the schema has no
+        updated_by column and inventing one here would need a migration.
+        """
+        row = self.get_rule(rule_id)
+        if row is None:
+            raise RepositoryError(f"No rule with id {rule_id}.")
+
+        if patch.rule_type is not None:
+            row.rule_type = patch.rule_type
+        if patch.value is not None:
+            # Re-validate against the row's *current* type: changing only the
+            # value must be checked against the type already stored, and
+            # changing only the type must be checked against the value
+            # already stored. Both orders end up validated here.
+            row.value = _normalize(row.rule_type, patch.value)
+        if patch.priority is not None:
+            row.priority = patch.priority
+        if patch.enabled is not None:
+            row.enabled = patch.enabled
+        if patch.scope is not None:
+            row.scope = patch.scope
+        if patch.scope_id is not None:
+            row.scope_id = patch.scope_id
+        if patch.description is not None:
+            row.description = patch.description
+
+        row.updated_at = _utcnow()
+        # SAVEPOINT for the same reason as create_rule: a rejected update
+        # must not discard the caller's other work.
+        try:
+            with self._s.begin_nested():
+                self._s.flush()
+        except IntegrityError as exc:
+            self._s.expire(row)
+            raise RepositoryError(f"Could not update rule {rule_id}.") from exc
+        return row
+
+    def delete_rule(self, rule_id: int) -> bool:
+        """Delete a rule. Hit rows are kept — see :class:`RuleHit`.
+
+        Returns False when there was nothing to delete, so callers can answer
+        404 without a second query.
+        """
+        row = self.get_rule(rule_id)
+        if row is None:
+            return False
+        self._s.delete(row)
+        self._s.flush()
+        return True
+
+    def set_enabled(self, rule_id: int, enabled: bool) -> Rule:
+        row = self.get_rule(rule_id)
+        if row is None:
+            raise RepositoryError(f"No rule with id {rule_id}.")
+        row.enabled = enabled
+        row.updated_at = _utcnow()
+        self._s.flush()
+        return row
+
+    def reorder(self, ids: list[int]) -> int:
+        """Set priorities to 1..N following ``ids``.
+
+        Only the listed rules are touched, so an operator can pin one rule at
+        the top without renumbering the other ninety. Ids that do not exist
+        are skipped rather than raising: a stale drag-and-drop list should not
+        fail the whole reorder. A repeated id is de-duplicated on its first
+        occurrence, so the position the operator chose is the one kept.
+
+        Returns how many rules were renumbered.
+        """
+        if not ids:
+            return 0
+
+        # Deduplicate on first occurrence. Without this a repeated id is
+        # applied twice and the rule ends up at the *later* position, which is
+        # not where the operator put it.
+        ordered_ids: list[int] = []
+        seen: set[int] = set()
+        for rule_id in ids:
+            if rule_id not in seen:
+                seen.add(rule_id)
+                ordered_ids.append(rule_id)
+
+        rows = {
+            row.id: row
+            for row in self._s.scalars(
+                select(Rule).where(Rule.id.in_(ordered_ids))
+            )
+        }
+        touched = 0
+        now = _utcnow()
+        for index, rule_id in enumerate(ordered_ids, start=1):
+            row = rows.get(rule_id)
+            if row is None:
+                continue
+            row.priority = index
+            row.updated_at = now
+            touched += 1
+        self._s.flush()
+        return touched
+
+    # -- hits ---------------------------------------------------------
+    def record_rule_hit(
+        self,
+        rule_id: int,
+        *,
+        scan_id: int | None = None,
+        target: str | None = None,
+        decision: str,
+        reason: str | None = None,
+        actor_id: int | None = None,
+        actor_username: str | None = None,
+    ) -> RuleHit | None:
+        """Record one rule evaluation and bump its counter.
+
+        The hit row and the counter move in the same transaction, so the
+        panel's hit_count can never disagree with the history it links to.
+        Returns None when the rule has been deleted meanwhile, which is not
+        an error: the evaluation already happened and there is nothing to
+        attribute it to.
+        """
+        if decision not in ("allow", "deny"):
+            raise RepositoryError(
+                f"Unknown rule decision '{decision}' (expected allow or deny)."
+            )
+
+        row = self.get_rule(rule_id)
+        if row is None:
+            return None
+
+        hit = RuleHit(
+            rule_id=rule_id,
+            scan_id=scan_id,
+            target=target,
+            decision=decision,
+            reason=reason,
+            actor_id=actor_id,
+            actor_username=actor_username,
+        )
+        self._s.add(hit)
+        row.hit_count = (row.hit_count or 0) + 1
+        row.last_hit_at = _utcnow()
+        self._s.flush()
+        return hit
+
+    def list_rule_hits(
+        self, filters: RuleHitFilters | None = None
+    ) -> tuple[list[RuleHit], int]:
+        """One page of hit rows plus the total match count."""
+        filters = filters or RuleHitFilters()
+        stmt = select(RuleHit)
+        count_stmt = select(func.count()).select_from(RuleHit)
+
+        if filters.rule_id is not None:
+            stmt = stmt.where(RuleHit.rule_id == filters.rule_id)
+            count_stmt = count_stmt.where(RuleHit.rule_id == filters.rule_id)
+        if filters.decision:
+            stmt = stmt.where(RuleHit.decision == filters.decision)
+            count_stmt = count_stmt.where(RuleHit.decision == filters.decision)
+        if filters.actor_id is not None:
+            stmt = stmt.where(RuleHit.actor_id == filters.actor_id)
+            count_stmt = count_stmt.where(RuleHit.actor_id == filters.actor_id)
+        if filters.target:
+            stmt = stmt.where(RuleHit.target == filters.target)
+            count_stmt = count_stmt.where(RuleHit.target == filters.target)
+        if filters.since is not None:
+            stmt = stmt.where(RuleHit.created_at >= filters.since)
+            count_stmt = count_stmt.where(RuleHit.created_at >= filters.since)
+        if filters.until is not None:
+            stmt = stmt.where(RuleHit.created_at <= filters.until)
+            count_stmt = count_stmt.where(RuleHit.created_at <= filters.until)
+
+        total = int(self._s.scalar(count_stmt) or 0)
+        page = max(1, filters.page)
+        size = max(1, min(500, filters.page_size))
+        rows = list(
+            self._s.scalars(
+                stmt.order_by(desc(RuleHit.created_at), desc(RuleHit.id))
+                .offset((page - 1) * size)
+                .limit(size)
+            )
+        )
+        return rows, total
+
+    def count_hits_since(self, cutoff: datetime) -> int:
+        """Hits recorded since ``cutoff`` — backs the daily hit cap."""
+        return int(
+            self._s.scalar(
+                select(func.count())
+                .select_from(RuleHit)
+                .where(RuleHit.created_at >= cutoff)
+            )
+            or 0
+        )
+
+    def purge_rule_hits(self, before: datetime) -> int:
+        """Delete hits older than ``before``. Returns the row count.
+
+        Rules themselves are never deleted by retention: a rule outliving its
+        own history would make the surviving hit rows unexplainable.
+        """
+        result = self._s.execute(
+            delete(RuleHit).where(RuleHit.created_at < before)
+        )
+        self._s.flush()
+        return int(result.rowcount or 0)
+
+
+def _normalize(rule_type: str, value: str) -> str:
+    """Validate ``value`` for ``rule_type`` and return the canonical form.
+
+    Raises :class:`RepositoryError` (not ValueError) so route handlers can
+    catch one exception for every rejection reason and answer 400.
+    """
+    try:
+        return validate_value(rule_type, value)
+    except ValueError as exc:
+        raise RepositoryError(str(exc)) from exc

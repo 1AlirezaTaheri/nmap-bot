@@ -34,12 +34,28 @@ class NmapRunner:
         self._binary = nmap_binary
         self._timeout = timeout_seconds
 
-    def run(self, target: str, args: list[str]) -> ScanResult:
+    def run(
+        self, target: str, args: list[str], *, timeout: int | None = None
+    ) -> ScanResult:
         """Execute nmap and return its XML document.
 
         ``args`` must come from a profile, never from a chat message.
+
+        ``timeout`` overrides the instance default for one call. It can
+        only come from a rule that already resolved to
+        ``min(configured, rule)``, so it can tighten the ceiling but
+        never extend a scan past what the deployment configured. Rejects
+        non-positive values rather than silently using them.
         """
         safe_target = validate_target(target)
+
+        effective_timeout = self._timeout
+        if timeout is not None:
+            if timeout < 1:
+                raise ScanExecutionError(
+                    f"Invalid scan timeout: {timeout}."
+                )
+            effective_timeout = timeout
 
         if any(a.startswith("-") and a == "-" for a in args):  # pragma: no cover
             raise ScanExecutionError("Invalid profile arguments.")
@@ -52,12 +68,12 @@ class NmapRunner:
                 command,
                 capture_output=True,
                 text=True,
-                timeout=self._timeout,
+                timeout=effective_timeout,
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
             raise ScanExecutionError(
-                f"Scan timed out after {self._timeout}s."
+                f"Scan timed out after {effective_timeout}s."
             ) from exc
         except FileNotFoundError as exc:
             raise ScanExecutionError(
