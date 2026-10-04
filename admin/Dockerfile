@@ -38,8 +38,17 @@ RUN npm run build && test -f dist/index.html
 FROM python:3.11-slim
 
 # tini reaps zombies and forwards SIGTERM so uvicorn shuts down cleanly.
+#
+# nmap is here because the admin service runs its own ScanWorker for Mini App
+# scans (see _build_miniapp_worker). It was missing at first: the bot image
+# installed nmap because the bot runs scans, and the admin image did not
+# because until the Mini App it never did. Every Mini App scan therefore
+# failed with "nmap binary not found" while the request itself returned 202.
+#
+# Kept identical to the bot image's package set so the two cannot drift on
+# which nmap a scan gets.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tini \
+    && apt-get install -y --no-install-recommends nmap tini \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
