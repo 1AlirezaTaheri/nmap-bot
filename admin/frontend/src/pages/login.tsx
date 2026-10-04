@@ -11,7 +11,6 @@ import { Spinner } from '@/components/feedback'
 const schema = z.object({
   username: z.string().min(1, 'Username is required').max(64, 'Username is too long'),
   password: z.string().min(1, 'Password is required'),
-  remember: z.boolean().default(false),
 })
 
 type FormValues = z.infer<typeof schema>
@@ -28,7 +27,7 @@ export function LoginPage(): JSX.Element {
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { username: '', password: '', remember: true },
+    defaultValues: { username: '', password: '' },
   })
 
   async function onSubmit(values: FormValues): Promise<void> {
@@ -119,15 +118,6 @@ export function LoginPage(): JSX.Element {
             </div>
             <FieldError>{errors.password?.message}</FieldError>
           </div>
-
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-muted">
-            <input
-              type="checkbox"
-              className="h-4 w-4 rounded border-border accent-[rgb(var(--primary))]"
-              {...register('remember')}
-            />
-            Remember me
-          </label>
 
           <Button type="submit" className="w-full" disabled={isSubmitting}>
             {isSubmitting ? (
