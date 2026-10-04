@@ -4,6 +4,82 @@ All notable changes to NetSentinel. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses
 semantic versioning loosely.
 
+## [Unreleased] — V3
+
+### Added
+
+**Rule engine**
+- `core/rule_values.py` parses and matches each rule type. Every parser is
+  total: a normalized value or `ValueError`, so a malformed rule is skipped
+  rather than failing a scan.
+- `core/rules.py` holds `RuleContext`, `RuleDecision` and `RuleEngine`. The
+  engine is pure — no database, no DNS, no I/O — which keeps the security
+  decision testable without a fixture and safe on the hot path.
+- Ten rule types across four families: CIDR, domain, port, and limit/window
+  types. Deny always wins; allow gates fail closed per family; evaluation
+  order is `(priority, id)`.
+- Quota and rate-limit state arrive through the context rather than being
+  read, which is what keeps the engine free of queries.
+
+**Persistence**
+- `rules` and `rule_hits` tables, and `RuleRepository`: CRUD, filtered
+  listing, `load_engine_rules()` for the hot path, `reorder()`, hit recording
+  and `purge_rule_hits()`.
+- Rule values are normalized on write, so what is stored is what the engine
+  will parse.
+- `rule_hits` records an evaluation only when a rule decided the outcome.
+  `hit_count` and `last_hit_at` move in the same transaction as the row.
+
+**Admin API** — `/api/rules` and `/api/rule-hits`, every endpoint
+role-gated and audited. Includes a dry-run `POST /api/rules/test` with no
+side effects, JSON export, and an all-or-nothing import that upserts by name.
+`rule.create`, `rule.update`, `rule.delete`, `rule.reorder`, `rule.import`,
+`rule.denied` and `rule.hit_cap` join the audit vocabulary.
+
+**Bot integration**
+- `bot/handlers/scan.py` evaluates rules after authorization and before the
+  rate limit, so a policy denial is reported as such and does not consume the
+  target's allowance. The effective rate limit and timeout flow into the
+  queued job and on to `subprocess.run`.
+- A denial replies with the reason and the rule name, records the hit, and
+  writes a `rule.denied` audit row.
+- `ScanProfile.port_list()` and `ScanJob.scan_timeout` thread port and
+  timeout information down to the runner.
+- Settings `rules_enabled`, `rules_default_action` and
+  `rules_max_hits_per_day`. Past the hit cap, evaluation continues and only
+  recording stops.
+
+**Retention** — `rule_hits` older than `RETENTION_DAYS` are pruned and
+reported as `rule_hits_deleted`. Rules themselves are never deleted.
+
+### Fixed
+
+- `RuleRepository.create_rule` and `update_rule` use SAVEPOINTs. The first
+  draft called `session.rollback()` on `IntegrityError`, which discarded every
+  rule written earlier in the same transaction — for `import`, one duplicate
+  would have thrown away the whole batch while reporting success.
+- `reorder()` de-duplicates ids, so a repeated id keeps the position the
+  operator chose instead of the later one.
+- Rate-limit keys come from `rate_limit_key()` on both sides. The handler
+  built its key from the target name while the engine read `ctx.target`, so a
+  `rate_limit` rule silently never blocked anything.
+
+### Notes
+
+- `rules_default_action` is informational. No global deny-all gate is
+  implemented; `allow_*` rules already fail closed per family.
+- `scan_timeout` overrides in `NmapRunner.run` reject a non-positive value
+  rather than silently using it.
+- The three shipped scan profiles report no port list, so port rules cannot be
+  evaluated for them; see the README's Rules section.
+- The engine performs no DNS resolution, by design.
+
+### Tests
+
+758 passing. 191 new across six files: the `rules` table shape, the value
+parsers, the engine, the repository, the admin API, and the rules inside the
+live `/scan` path.
+
 ## [Unreleased] — V2
 
 ### Added

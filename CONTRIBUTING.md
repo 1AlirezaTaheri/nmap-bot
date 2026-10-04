@@ -121,3 +121,37 @@ scheduler can stop cleanly. `restart: unless-stopped` on both services.
 After changing `settings.py`, add any new variables to `.env` yourself — the
 image will not do it for you, and the bot fails closed on missing required
 values.
+
+---
+
+## The rule engine stays pure
+
+`core/rules.py` decides whether a request may proceed. It must keep doing only
+that. Concretely:
+
+- **No database access.** Quota counts and last-scan times arrive through
+  `RuleContext`; the repository supplies them. If the engine grows a query, the
+  tests stop being able to run without a fixture and the hot path grows I/O.
+- **No DNS.** A hostname is judged by its domain rules, and one resolving to a
+  denied address is not caught. Resolution would make the decision depend on
+  the network and on timing.
+- **No Telegram, no clock.** `RuleContext.now` is injectable; a time-dependent
+  rule is tested by passing a time, not by freezing anything.
+- **Total parsers.** A `validate_value` in `core/rule_values.py` returns a
+  normalized string or raises `ValueError`. Never return something the engine
+  would later have to re-validate.
+
+When adding a rule type, touch all of: the `RULE_TYPES` vocabulary, a parser,
+a matcher in `rule_values.py`, a branch in the engine, and the docs. There is a
+test asserting `KNOWN_TYPES` matches `RULE_TYPES`, so a type added without a
+parser fails loudly.
+
+### Where the boundary is
+
+| Concern | Owner |
+| --- | --- |
+| Whether a request is permitted | `core/rules.py` |
+| Reading a rule value, matching it | `core/rule_values.py` |
+| Counting scans, loading rules, recording hits | `database/repository.py` |
+| Deciding when to consult the engine | `bot/handlers/scan.py` |
+| Exposing and editing rules | `admin/routes/rules.py` |

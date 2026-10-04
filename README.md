@@ -249,6 +249,156 @@ reproducible.
 
 ---
 
+## Rules
+
+Policy rules let an operator change scan scope, deny-lists, rate limits and
+quotas **without editing `.env` and restarting the bot**. Each rule is a row
+in `rules`, evaluated by the bot before every scan and manageable from the
+panel.
+
+### Rule types
+
+| Type | `value` | Effect |
+| --- | --- | --- |
+| `allow_cidr` / `deny_cidr` | `192.168.174.0/24,10.0.0.0/8` | Address and CIDR targets |
+| `allow_domain` / `deny_domain` | `*.example.com,corp.test` | Hostname targets |
+| `allow_port` / `deny_port` | `22,80,8000-9000` | Ports (ranges inclusive) |
+| `max_scan_time` | `120` | Seconds; **lowers** the ceiling only |
+| `rate_limit` | `60` | Seconds between scans |
+| `time_window` | `08:00-22:00`, `22:00-06:00` | UTC window; inside = allowed |
+| `user_quota` | `50/day`, `10/hour` | Scans per user per period |
+
+`*.example.com` matches any subdomain but not the bare domain — the behaviour
+a DNS wildcard record actually has. Trailing dots are stripped, and input is
+forgiving: `8:00 - 9:30` is stored as `08:00-09:30`.
+
+### Evaluation order
+
+Rules sort by `(priority, id)` ascending; `id` breaks ties so the order is
+total. Then:
+
+1. **Every** rule is examined. The first one that *denies* short-circuits, so a
+   deny at priority 100 still blocks a request that an allow at priority 1
+   already matched.
+2. **Allow gates fail closed, per family.** Addresses are judged by CIDR rules
+   and hostnames by domain rules. If a family has allow rules and none
+   matched, the request is denied with `no matching allow rule`. If a family
+   has no allow rules, it imposes nothing. Two families do not compensate for
+   each other — a matched `allow_domain` does not excuse an unmatched
+   `allow_cidr`.
+3. `time_window` is a **permission**: inside the window passes, outside is
+   denied. Overnight windows such as `22:00-06:00` wrap midnight.
+4. `user_quota` is always per user. `rate_limit` is per target by default,
+   keyed on the target *name* so it shadows the existing `RateLimiter`;
+   `scope="user"` makes it per user. Both must pass.
+5. `max_scan_time` resolves to `min(SCAN_TIMEOUT_SECONDS, smallest matching
+   rule)`, so a rule can only tighten the ceiling and can never leave a scan
+   unbounded. `rate_limit` instead takes the smallest matching rule and falls
+   back to the environment value, so a rule *may* relax it.
+
+A decision reports the rule that decided it (`rule_id`, `rule_name`), plus
+`effective_rate_limit_seconds` and `effective_scan_timeout`, both of which
+flow into the scan that follows.
+
+### Scope
+
+`scope` is `global`, `user` or `target`. A `user` rule with `scope_id` set to
+a Telegram ID applies only to that user — and never to a scheduled run, which
+has no actor.
+
+### Broken rules
+
+An unknown `rule_type` or a malformed `value` is logged and **skipped**, so a
+typo cannot deny legitimate traffic. The one exception: an unreadable `scope`
+on a *deny* rule is treated as `global`, because a restriction should not
+stand down over a typo.
+
+### Known limitation: no DNS resolution
+
+A hostname is judged by its own domain rules. A hostname that resolves to a
+denied address is **not** caught, because the engine performs no DNS lookup.
+Resolution would make the decision depend on the network and on timing, and a
+policy check that can be steered by DNS is worse than one that is honest about
+its blind spot.
+
+### Port rules and the shipped profiles
+
+Port rules apply only when the engine is told which ports a scan will probe.
+`ScanProfile.port_list()` supplies them, and **the three shipped profiles
+return `()`** — they use nmap's `-F` and `--top-ports`, which resolve to
+nmap's own port tables at run time. Hardcoding a copy of those tables would go
+stale the next time nmap updates, so the honest answer is that the port list is
+unknown, and port rules cannot be evaluated for `quick`, `service` or `deep`.
+A profile declaring an explicit `-p` list enables them.
+
+### API
+
+All under `/api/rules`, role-gated and audited.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| `GET` | `/api/rules` | `?type=&enabled=&scope=&q=`; ordered by priority |
+| `POST` | `/api/rules` | 400 bad value, 409 duplicate name |
+| `PATCH` | `/api/rules/{id}` | Partial; re-validates the resulting row |
+| `DELETE` | `/api/rules/{id}?confirm=true` | 400 without `confirm` |
+| `POST` | `/api/rules/{id}/toggle` | Flips `enabled` |
+| `POST` | `/api/rules/reorder` | `{ids:[3,1,2]}` → priorities 1..3 |
+| `POST` | `/api/rules/test` | **Dry run.** No hit row, no counter change |
+| `GET` | `/api/rules/{id}/hits` | Paginated history for one rule |
+| `GET` | `/api/rules/export` | JSON download; hits excluded |
+| `POST` | `/api/rules/import` | Superadmin; all-or-nothing, upserts by name |
+| `GET` | `/api/rule-hits` | All rules, filterable |
+
+`POST /api/rules/test` is the one to reach for first. It returns exactly what
+the engine would decide, with no side effects:
+
+```bash
+curl -b cookie -H 'Content-Type: application/json' \
+  -d '{"target":"10.0.0.5"}' http://127.0.0.1:8080/api/rules/test
+```
+
+```json
+{
+  "allowed": false,
+  "reason": "blocked by deny_cidr rule: 10.0.0.5 is in 10.0.0.0/8",
+  "rule_id": 2,
+  "rule_name": "deny-ten",
+  "effective_rate_limit_seconds": null,
+  "effective_scan_timeout": null,
+  "warnings": [],
+  "rules_considered": 3,
+  "rules_enabled": 1,
+  "side_effects": "none"
+}
+```
+
+`import` validates every rule before writing anything, so one bad entry
+rejects the batch instead of leaving a half-applied configuration behind.
+
+### Settings
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `rules_enabled` | `true` | Master switch; `false` skips evaluation entirely |
+| `rules_default_action` | `allow` | Reserved for a future gate; informational |
+| `rules_max_hits_per_day` | `10000` | Stop recording hits past this, keep evaluating |
+
+Past the hit cap, evaluation continues — losing history is survivable, losing
+enforcement is not. The cap is logged once a day, not once per scan.
+
+### History and retention
+
+`rule_hits` records an evaluation only when a rule *decided* the outcome, so
+it answers "what did this rule set actually do?" rather than logging every
+scan. `hit_count` and `last_hit_at` on the rule move in the same transaction
+as the row, so the counter cannot disagree with the history it links to.
+
+Retention prunes `rule_hits` older than `RETENTION_DAYS` and reports
+`rule_hits_deleted`. **Rules are never deleted by retention** — a rule
+outliving its own history would leave the surviving rows unexplainable.
+
+---
+
 ## Setup
 
 ```bash
@@ -324,7 +474,7 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/src" -w /src \
   -lc 'pip install -q --user pytest pytest-asyncio && PATH="$HOME/.local/bin:$PATH" python -m pytest -q'
 ```
 
-323 tests, no network access required — `tests/test_v1_integration.py` drives
+758 tests, no network access required — `tests/test_v1_integration.py` drives
 the full pipeline and the scheduler with a stub runner.
 
 Layout:
@@ -346,6 +496,12 @@ Layout:
 | `test_admin_users_stats.py` | user CRUD, dashboard queries |
 | `test_audit_settings.py` | audit trail, settings coercion |
 | `test_i18n.py` | translation coverage and fallback |
+| `test_rules_model.py` | `rules` table shape, defaults, constraints |
+| `test_rule_values.py` | rule value parsers and matchers |
+| `test_rule_engine.py` | evaluation order, gates, scoping, limits |
+| `test_rule_repository.py` | rule CRUD, ordering, hits, retention |
+| `test_admin_rules_api.py` | rules API, role gating, import atomicity |
+| `test_scan_rules_integration.py` | rules in the live `/scan` path |
 
 The frontend has its own gate: `npm run build` runs `tsc`, so a type
 error fails the admin image build.
@@ -353,6 +509,13 @@ error fails the admin image build.
 ---
 
 ## Known limitations
+
+- **Port rules cannot fire for the shipped profiles.** They delegate port
+  selection to nmap (`-F`, `--top-ports`), so the engine is never told the
+  port list and `allow_port`/`deny_port` are inert. Only a profile declaring
+  an explicit `-p` list enables them.
+- **The engine resolves no DNS.** A hostname pointing at a denied address
+  is not caught; see the Rules section.
 
 - **The SPA is served uncompressed.** Neither uvicorn nor Starlette's
   `StaticFiles` applies gzip or brotli, so a browser pulls ~1 MB of
