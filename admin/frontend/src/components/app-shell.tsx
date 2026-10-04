@@ -25,14 +25,17 @@ interface NavItem {
   end?: boolean
 }
 
+// Navigation targets are relative to the router's basename ("/admin"), so a
+// link here must be written as "/" or "/users", never "/admin/users".
 const NAV: NavItem[] = [
-  { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
-  { to: '/admin/users', label: 'Users', icon: UsersIcon },
-  { to: '/admin/targets', label: 'Targets', icon: Network },
-  { to: '/admin/audit', label: 'Audit Log', icon: ScrollText },
-  { to: '/admin/settings', label: 'Settings', icon: SettingsIcon },
+  { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
+  { to: '/users', label: 'Users', icon: UsersIcon },
+  { to: '/targets', label: 'Targets', icon: Network },
+  { to: '/audit', label: 'Audit Log', icon: ScrollText },
+  { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ]
 
+// Keyed by the full pathname from useLocation(), so these stay absolute.
 const BREADCRUMB: Record<string, string> = {
   '/admin': 'Dashboard',
   '/admin/users': 'Users',
@@ -206,7 +209,7 @@ export function Topbar({
                   className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-fg transition-colors hover:bg-elevated"
                   onClick={() => {
                     setMenuOpen(false)
-                    navigate('/admin/settings')
+                    navigate('/settings')
                   }}
                 >
                   <SettingsIcon className="h-4 w-4 text-muted" />

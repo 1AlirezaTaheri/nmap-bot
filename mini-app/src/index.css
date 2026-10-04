@@ -1,0 +1,111 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+   Telegram theme tokens.
+
+   Set inline by the script in index.html before React mounts, then re-applied
+   by src/lib/telegram.ts whenever Telegram reports a theme change. The values
+   here are only the fallback for a browser with no Telegram WebApp, which is
+   what `npm run dev` gives you.
+   --------------------------------------------------------------------------- */
+:root {
+  --tg-bg: #ffffff;
+  --tg-secondary-bg: #f2f2f7;
+  --tg-text: #000000;
+  --tg-hint: #707579;
+  --tg-link: #2aabee;
+  --tg-button: #2aabee;
+  --tg-button-text: #ffffff;
+
+  /* Status colours. Fixed rather than themed: "good" has to read as good in
+     both Telegram themes, and Telegram's palette has no semantic green or
+     red of its own. */
+  --ns-good: 34 197 94;
+  --ns-good-soft: 220 252 231;
+  --ns-bad: 239 68 68;
+  --ns-bad-soft: 254 226 226;
+  --ns-warn: 245 158 11;
+  --ns-warn-soft: 254 243 199;
+  --ns-info: 59 130 246;
+  --ns-info-soft: 219 234 254;
+}
+
+/* Telegram's dark scheme darkens our soft status tints, which are otherwise
+   light enough to glare on a dark background. */
+html[data-color-scheme='dark'] {
+  --ns-good-soft: 22 78 60;
+  --ns-bad-soft: 127 29 29;
+  --ns-warn-soft: 120 53 15;
+  --ns-info-soft: 30 58 138;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  height: 100%;
+  overscroll-behavior-y: none;
+}
+
+body {
+  @apply bg-bg text-text font-sans antialiased;
+  margin: 0;
+  /* Respect the notch and the home indicator. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+#root {
+  min-height: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-lg bg-secondary p-4;
+  }
+
+  .input {
+    @apply w-full rounded-md bg-secondary px-3 py-2 text-[15px] text-text
+      outline-none transition-opacity
+      placeholder:text-hint
+      focus:ring-2 focus:ring-link/40;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-4
+      py-2.5 text-[15px] font-medium text-button-text transition-opacity
+      active:opacity-70 disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn w-full;
+    background-color: rgb(var(--tg-button));
+  }
+
+  .btn-quiet {
+    @apply btn bg-secondary text-link;
+  }
+
+  .chip {
+    @apply rounded-full px-3 py-1 text-[13px] font-medium transition-colors;
+  }
+}
+
+/* Recharts injects a focus ring on the SVG wrapper that looks wrong on touch. */
+.recharts-wrapper:focus,
+.recharts-surface:focus {
+  outline: none;
+}

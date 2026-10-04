@@ -3,10 +3,15 @@
  *
  * Every call goes through `request`, which:
  *   - sends the JWT cookie (credentials: 'include');
- *   - redirects to /admin/login on 401, because an expired session must not
- *     leave the user staring at an empty shell;
- *   - raises `ApiError` with the backend's `detail` string, so forms can
- *     surface the server's own explanation rather than a generic failure.
+ *   - reports the backend's `detail` string through `ApiError`, so forms can
+ *     surface the server's own explanation rather than a generic failure;
+ *   - calls `onUnauthorized` on a 401, EXCEPT when the call opts out.
+ *
+ * Why the opt-out exists: `GET /api/me` is the session probe. A 401 there is
+ * the ordinary "nobody is signed in" answer, not an expired session. Firing
+ * the handler for it sent the app to the login route by reloading the page,
+ * which re-ran the probe and produced an unbounded reload loop. The opt-out
+ * keeps "never signed in" and "signed in then lost it" distinguishable.
  */
 
 export class ApiError extends Error {
@@ -18,7 +23,7 @@ export class ApiError extends Error {
   }
 }
 
-/** Called when the session is gone; wired up once by the router. */
+/** Called when a session that existed is gone. Wired up once by the router. */
 let onUnauthorized: () => void = () => {}
 
 export function setUnauthorizedHandler(handler: () => void): void {
@@ -29,10 +34,15 @@ interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
   body?: unknown
   signal?: AbortSignal
+  /**
+   * Do not fire `onUnauthorized` on a 401. Set by the session probe, whose
+   * 401 is an expected answer rather than a lost session.
+   */
+  suppressUnauthorized?: boolean
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, signal } = options
+  const { method = 'GET', body, signal, suppressUnauthorized = false } = options
 
   let response: Response
   try {
@@ -63,7 +73,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   if (!response.ok) {
     if (response.status === 401) {
-      onUnauthorized()
+      // The session probe opts out: its 401 means "not signed in", not
+      // "signed in and then lost it".
+      if (!suppressUnauthorized) onUnauthorized()
       throw new ApiError(401, 'Session expired')
     }
     const detail =
@@ -264,7 +276,18 @@ export const api = {
 
   logout: () => request<{ ok: boolean }>('/logout', { method: 'POST' }),
 
-  me: (signal?: AbortSignal) => request<Me>('/me', signal ? { signal } : {}),
+  /**
+   * The session probe.
+   *
+   * A 401 here is the normal unauthenticated answer, so the global
+   * unauthorized handler is suppressed: the caller decides what to render
+   * instead. See the module docstring for why firing it caused a reload loop.
+   */
+  me: (signal?: AbortSignal) =>
+    request<Me>('/me', {
+      ...(signal ? { signal } : {}),
+      suppressUnauthorized: true,
+    }),
 
   changePassword: (password: string) =>
     request<{ ok: boolean }>('/password', { method: 'POST', body: { password } }),

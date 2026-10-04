@@ -160,6 +160,17 @@ async def _post_init(app) -> None:
 
     log.info("Background scan worker started")
 
+    # Mini App affordances. The bot object exists from here on, so the
+    # menu button cannot be set any earlier. Both calls swallow their own
+    # failures: a menu button that could not be set must not stop the bot
+    # from answering /scan.
+    from bot import miniapp as miniapp_ui
+
+    settings = app.bot_data.get("settings")
+    if settings is not None:
+        await miniapp_ui.set_menu_button(app.bot, settings)
+        await miniapp_ui.publish_commands(app.bot, settings)
+
 
 async def _post_shutdown(app) -> None:
     """Stop in dependency order so nothing is left mid-flight."""
@@ -271,6 +282,7 @@ def build_application(settings: Settings):
     app.bot_data["bot_language"] = bot_language
 
     app.add_handler(CommandHandler("start", start_handlers.start))
+    app.add_handler(CommandHandler("app", start_handlers.open_app))
     app.add_handler(CommandHandler("help", start_handlers.help_command))
     app.add_handler(CommandHandler("tlang", start_handlers.set_language))
     app.add_handler(CommandHandler("scan", scan_handlers.scan))

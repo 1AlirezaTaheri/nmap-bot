@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <title>NetSentinel</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+      // Applied before React mounts so the first paint already uses
+      // Telegram's palette. Without this a dark-theme user sees a white flash.
+      (function () {
+        try {
+          var tg = window.Telegram && window.Telegram.WebApp
+          var theme = (tg && tg.themeParams) || {}
+          var root = document.documentElement
+          var set = function (name, fallback) {
+            root.style.setProperty(name, theme[name] || fallback)
+          }
+          set('--tg-bg', '#ffffff')
+          set('--tg-secondary-bg', '#f2f2f7')
+          set('--tg-text', '#000000')
+          set('--tg-hint', '#707579')
+          set('--tg-link', '#2AABEE')
+          set('--tg-button', '#2AABEE')
+          set('--tg-button-text', '#ffffff')
+          if (tg && tg.colorScheme === 'dark') {
+            root.style.setProperty('--tg-bg', '#17212b')
+            root.style.setProperty('--tg-secondary-bg', '#0e1621')
+            root.style.setProperty('--tg-text', '#f5f5f5')
+            root.style.setProperty('--tg-hint', '#7d8590')
+          }
+        } catch (e) {
+          /* defaults in index.css cover it */
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -123,6 +123,19 @@ class Settings:
     # client can spoof its IP to dodge the login rate limit.
     admin_trust_forwarded_for: bool
 
+    # --- Telegram Mini App ---
+    # Public HTTPS origin the Mini App is served from. Telegram refuses to
+    # load a Mini App over plain HTTP, so an empty value disables every Mini
+    # App affordance (menu button, /app command, the /start button) rather
+    # than publishing something that cannot work.
+    miniapp_url: str = ""
+    # Reject initData older than this. Telegram's guidance is one day;
+    # shorter is tighter, longer forgives a phone with a wrong clock.
+    #
+    # Defaulted so adding the Mini App settings did not break every
+    # direct Settings(...) construction in the test suite.
+    miniapp_max_age_seconds: int = 86400
+
     @classmethod
     def from_env(cls) -> "Settings":
         allowed = _csv_ints("ALLOWED_USER_IDS")
@@ -171,5 +184,11 @@ class Settings:
             admin_cookie_secure=_bool("ADMIN_COOKIE_SECURE", "false"),
             admin_trust_forwarded_for=_bool(
                 "ADMIN_TRUST_FORWARDED_FOR", "false"
+            ),
+
+            # Trailing slash stripped so joining paths never doubles it.
+            miniapp_url=_optional("MINIAPP_URL", "").rstrip("/"),
+            miniapp_max_age_seconds=_positive(
+                "MINIAPP_MAX_AGE_SECONDS", "86400"
             ),
         )

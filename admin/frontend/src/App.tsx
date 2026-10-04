@@ -62,41 +62,69 @@ function Shell(): JSX.Element {
       .catch(() => undefined)
       .finally(() => {
         queryClient.clear()
-        navigate('/admin/login', { replace: true })
+        navigate('/login', { replace: true })
       })
   }
 
   if (isLoading) return <FullScreenSpinner />
 
-  // A 401 already fired the unauthorized handler. Reaching here with an
-  // error means the session is unusable, so send them to login rather than
-  // rendering a shell with no data.
-  if (isError || !me) return <Navigate to="/admin/login" replace />
+  // Not signed in, or the session went away. <Navigate> is a client-side
+  // navigation, so this never reloads the page.
+  if (isError || !me) return <Navigate to="/login" replace />
 
   return (
     <AppShell username={me.username} role={me.role} onLogout={logout} onRefresh={refresh}>
       {/* key forces a remount when the toolbar refresh button is pressed */}
       <React.Fragment key={tick}>
         <Routes>
-          <Route path="/admin" element={<DashboardPage onRefresh={refresh} />} />
-          <Route path="/admin/users" element={<UsersPage />} />
-          <Route path="/admin/targets" element={<TargetsPage />} />
-          <Route path="/admin/audit" element={<AuditPage />} />
-          <Route path="/admin/settings" element={<SettingsPage />} />
-          <Route path="*" element={<Navigate to="/admin" replace />} />
+          <Route path="/" element={<DashboardPage onRefresh={refresh} />} />
+          <Route path="/users" element={<UsersPage />} />
+          <Route path="/targets" element={<TargetsPage />} />
+          <Route path="/audit" element={<AuditPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </React.Fragment>
     </AppShell>
   )
 }
 
+/**
+ * Wires "session lost" to "go back to login", as a client-side navigation.
+ *
+ * It lives inside the Router because it needs `useNavigate`. The previous
+ * version assigned `window.location.href`, which is a hard reload — and
+ * combined with the route paths below it re-entered the shell on every pass,
+ * producing a reload loop on an unauthenticated visit.
+ *
+ * api.ts suppresses this handler for the initial `/api/me` probe, so this only
+ * fires when a session genuinely existed and was then lost.
+ */
+function SessionGuard(): null {
+  const navigate = useNavigate()
+
+  React.useEffect(() => {
+    setUnauthorizedHandler(() => {
+      queryClient.clear()
+      navigate('/login', { replace: true })
+    })
+    return () => setUnauthorizedHandler(() => {})
+  }, [navigate])
+
+  return null
+}
+
 function App(): JSX.Element {
   const theme = useUIStore((s) => s.theme)
 
   return (
+    // basename="/admin" means every route path and every navigation target
+    // below is relative to /admin. Writing "/admin/users" here would resolve
+    // to /admin/admin/users.
     <BrowserRouter basename="/admin">
+      <SessionGuard />
       <Routes>
-        <Route path="/admin/login" element={<LoginPage />} />
+        <Route path="/login" element={<LoginPage />} />
         <Route
           path="*"
           element={
@@ -112,14 +140,6 @@ function App(): JSX.Element {
 }
 
 export default function Root(): JSX.Element {
-  React.useEffect(() => {
-    // One place wires "session expired" to "go back to login".
-    setUnauthorizedHandler(() => {
-      queryClient.clear()
-      window.location.href = '/admin/login'
-    })
-  }, [])
-
   return (
     <QueryClientProvider client={queryClient}>
       <App />

@@ -35,3 +35,7 @@ npm-debug.log*
 
 # local environment overrides
 .env.local
+
+# Mini App build artefacts (the image builds its own)
+mini-app/dist/
+mini-app/node_modules/

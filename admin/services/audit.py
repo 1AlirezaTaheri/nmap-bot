@@ -55,6 +55,11 @@ ACTIONS = (
     "rule.import",
     "rule.denied",
     "rule.hit_cap",
+    "miniapp.auth",
+    "miniapp.auth_failed",
+    "miniapp.scan_requested",
+    "miniapp.target_add",
+    "miniapp.settings_update",
 )
 
 ACTOR_ADMIN = "admin"

@@ -25,8 +25,9 @@ and reports *differences* between scans rather than raw dumps.
                                     │
              ┌──────────────────────▼───────────────────────┐
              │            workers/scan_worker.py            │
-             │   single queue · bounded concurrency        │
-             │   manual + scheduled share one worker        │
+             │  one queue per process · bounded concurrency  │
+             │  bot: manual + scheduled, one worker          │
+             │  admin: Mini App only, 1 slot (see below)     │
              └───┬───────────────────────────────┬──────────┘
                  │                               │
    ┌─────────────▼──────────────┐   ┌────────────▼───────────────┐
@@ -246,6 +247,139 @@ toggle is one attribute flip rather than a re-render. Dark is the default;
 `admin/frontend/dist/` and `node_modules/` are gitignored — the image builds
 its own bundle, and `package-lock.json` is committed so `npm ci` is
 reproducible.
+
+---
+
+## Telegram Mini App
+
+A React single-page app that runs **inside Telegram**, mounted at `/app` by
+the same admin service and authenticated by Telegram's signed `initData`
+rather than a password.
+
+```
+  Telegram ──▶ cloudflared ──▶ admin (FastAPI, :8080)
+                                  ├─ /app/assets   hashed JS/CSS
+                                  ├─ /app/*        index.html (SPA)
+                                  └─ /miniapp/*    JSON, initData auth
+```
+
+Three problems the web panel had go away here, which is the reason to prefer
+it: there is **no login form** (Telegram asserts the identity and the server
+verifies the signature), the app **inherits Telegram's colours** from
+`themeParams`, and it needs **no SSH tunnel** (Telegram proxies the WebView).
+
+### Authentication
+
+Every `/miniapp/*` request carries the `X-Telegram-Init-Data` header. The
+server checks, per Telegram's spec:
+
+```
+secret_key = HMAC_SHA256(key="WebAppData", msg=bot_token)
+check      = HMAC_SHA256(key=secret_key, msg=check_string)
+```
+
+`check_string` is every field except `hash`, sorted by key and joined with
+`\n` as `key=value`. The comparison is `hmac.compare_digest`, and the bot
+token is only ever a *message*, never a key.
+
+Three consequences worth stating:
+
+- **The signature is checked before the freshness.** Checking age first would
+  let an attacker probe the limit with blobs they forged.
+- **A future `auth_date` is refused**, not treated as fresh — a skewed clock
+  must not buy extra life.
+- **A valid signature proves *who*; `ALLOWED_USER_IDS` decides *whether*.**
+  A correctly signed blob from a stranger is a `403`.
+
+A disabled `telegram_users` row is refused on every endpoint. That check
+lives in the authentication dependency rather than in the write handlers,
+because otherwise disabling a user stopped their writes while leaving every
+read open.
+
+There is no Mini App read-only mode that leaks: if `initData` does not verify,
+nothing is returned.
+
+### HTTPS, and the tunnel
+
+Telegram refuses to load a Mini App over plain HTTP, so something has to
+terminate TLS. `docker-compose.yml` ships a Cloudflare **quick tunnel**, which
+is the right default for a VM with no public IP: no domain, no certificate, no
+port forwarding, and it works behind NAT because the connection is outbound.
+
+```bash
+docker compose up -d tunnel
+# the hostname is printed once the tunnel connects
+docker compose logs tunnel | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | head -1
+```
+
+Then point `MINIAPP_URL` at it and restart the bot and admin, since both read
+it:
+
+```bash
+cd ~/nmap-bot
+URL=$(docker compose logs tunnel | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | head -1)
+sed -i "s|^MINIAPP_URL=.*|MINIAPP_URL=$URL|" .env
+docker compose up -d --force-recreate bot admin
+```
+
+`MINIAPP_URL` gates every affordance. Telegram cannot load an `http://` URL,
+so a non-HTTPS or empty value **disables** the menu button, `/app` and the
+`/start` button rather than publishing a button that opens a blank WebView.
+
+**The quick-tunnel hostname changes every time the container restarts.** That
+is inherent to a `trycloudflare.com` URL. For a stable address, put a real
+hostname in front of it (a named Cloudflare tunnel) and set `MINIAPP_URL` to
+that. ngrok works the same way if you prefer it.
+
+### Using it
+
+Three ways in, all equivalent:
+
+- the **menu button** at the bottom-left of the chat, always present;
+- **`/app`** in the chat;
+- the **button on the greeting** you get from `/start`.
+
+Once open: a bottom tab bar with Dashboard, Targets, Scan, Changes, Rules and
+Settings. Rules are **read-only** here — creating and editing them stays in the
+web panel, and the app says so rather than showing a control that does
+nothing.
+
+### Frontend
+
+`mini-app/` — Vite, React 18, TypeScript (`strict`), Tailwind, TanStack Query,
+Recharts and `@twa-dev/sdk`. Like the admin panel, **Node is only needed to
+build it**; `admin/Dockerfile` has a `node:20-alpine` stage that produces
+`mini-app/dist`, and the runtime image has no Node in it.
+
+Every colour is a CSS variable fed from `Telegram.WebApp.themeParams`, so the
+app is themed by the host with no conditional classes and no theme flash. The
+exceptions are the status colours: green means success and red means danger in
+both Telegram themes, because Telegram's own palette has no semantic green or
+red.
+
+`basename="/app"` on the router, so every route path is basename-relative
+(`/targets`, not `/app/targets`). Writing the full path there would double
+the prefix — the same class of bug the web panel had.
+
+| Path | Purpose |
+| --- | --- |
+| `src/lib/telegram.ts` | the only module that touches the SDK; safe outside Telegram |
+| `src/lib/api.ts` | typed client; reads `initData` per call, never at import |
+| `src/pages/` | dashboard, targets, scan, changes, rules, settings |
+
+### Scanning from the Mini App
+
+A Mini App scan goes through the **same** worker, rules, scope check and rate
+limiter as `/scan` in chat — the app is a second front door onto one pipeline,
+not a bypass.
+
+One caveat, stated plainly: the bot and the admin service are separate
+containers, so the admin service cannot reach the bot's in-process worker.
+Rather than introduce a queue, the admin process runs **its own** worker
+against the same database, with concurrency pinned low
+(`MINIAPP_WORKER_CONCURRENCY`, default 1). The real ceiling on concurrent
+nmap processes is therefore the **sum** of both workers, not
+`MAX_CONCURRENT_SCANS` alone.
 
 ---
 
@@ -509,6 +643,21 @@ error fails the admin image build.
 ---
 
 ## Known limitations
+
+- **Two scan workers, so `MAX_CONCURRENT_SCANS` is not the whole ceiling.**
+  The Mini App is served by the admin service, which cannot reach the bot's
+  in-process worker, so the admin process runs its own against the same
+  database. Total concurrent nmap processes is the sum of both workers'
+  limits. `MINIAPP_WORKER_CONCURRENCY` (default 1) keeps the admin side
+  deliberately small; lower `MAX_CONCURRENT_SCANS` if the machine is tight.
+- **The quick-tunnel hostname changes on every restart.** `MINIAPP_URL` has
+  to be updated to match, and the bot and admin restarted, or the menu button
+  and `/app` point at a hostname that no longer resolves. Use a named
+  Cloudflare tunnel for a stable address.
+- **The Mini App has not been exercised inside a real Telegram client.** The
+  signature scheme, the API surface and the bundle are verified by tests and
+  by a live server, but no message has been sent to the bot and the WebView
+  opened from a phone.
 
 - **Port rules cannot fire for the shipped profiles.** They delegate port
   selection to nmap (`-F`, `--top-ports`), so the engine is never told the

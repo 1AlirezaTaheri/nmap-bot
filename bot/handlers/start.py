@@ -17,6 +17,7 @@ from bot.handlers.common import (
     database,
     lang_of_update,
 )
+from bot import miniapp as miniapp_ui
 from bot.messages import reports
 from core.i18n import available_languages, normalize_lang, t
 from core.profiles import PROFILES
@@ -29,6 +30,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     principal = await authenticate_or_denounce(update, context)
     if principal is None:
         return
+
+    settings = context.application.bot_data.get("settings")
 
     # Remember where scheduled alerts should go.
     try:
@@ -45,7 +48,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Never let bookkeeping stop the greeting.
         log.warning("Could not record operator chat", exc_info=True)
 
-    await update.message.reply_text(reports.start_greeting(lang))
+    await update.message.reply_text(
+        reports.start_greeting(lang),
+        reply_markup=miniapp_ui.inline_keyboard(settings),
+    )
     await update.message.reply_text(t("start.hint", lang))
 
 
@@ -105,3 +111,30 @@ async def set_language(
 
     # Reply in the language the user just chose, to confirm it took effect.
     await update.message.reply_text(t("start.greeting", wanted))
+
+
+async def open_app(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """`/app` — open the Telegram Mini App.
+
+    Replies on every path: with a button when the Mini App is configured, and
+    with an explanation when it is not. Never silent, because a user who typed
+    /app and got nothing has no way to tell a bug from a missing setting.
+    """
+    lang = lang_of_update(update, context)
+    principal = await authenticate_or_denounce(update, context)
+    if principal is None:
+        return
+
+    settings = context.application.bot_data.get("settings")
+    keyboard = miniapp_ui.inline_keyboard(settings, text=t("app.button", lang))
+
+    if keyboard is None:
+        await update.message.reply_text(t("app.unavailable", lang))
+        return
+
+    await update.message.reply_text(
+        t("app.title", lang),
+        reply_markup=keyboard,
+    )

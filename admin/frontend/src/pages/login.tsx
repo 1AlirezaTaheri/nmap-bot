@@ -36,7 +36,7 @@ export function LoginPage(): JSX.Element {
     try {
       await api.login(values.username, values.password)
       // Full navigation so the shell re-mounts with a fresh session.
-      navigate('/admin', { replace: true })
+      navigate('/', { replace: true })
     } catch (error) {
       const message =
         error instanceof ApiError ? error.message : 'Sign-in failed. Please try again.'

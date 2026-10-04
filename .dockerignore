@@ -32,3 +32,8 @@ node_modules
 admin/frontend/dist
 *.tsbuildinfo
 npm-debug.log
+# Mini App build artefacts (the image builds its own)
+node_modules
+**/node_modules
+mini-app/dist
+*.tsbuildinfo

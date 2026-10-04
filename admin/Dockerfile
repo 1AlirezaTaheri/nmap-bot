@@ -18,6 +18,23 @@ COPY admin/frontend/ ./
 RUN npm run build && test -f dist/index.html
 
 
+# ---------------------------------------------------------------------------
+# Stage 2: the Telegram Mini App.
+#
+# A separate frontend from the web panel: different runtime (Telegram WebApp
+# vs a browser), different auth (signed initData vs a cookie), different theme
+# source. One bundle, one build, mounted at /app by the Python service.
+# ---------------------------------------------------------------------------
+FROM node:20-alpine AS miniapp
+WORKDIR /app/mini-app
+
+COPY mini-app/package.json mini-app/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY mini-app/ ./
+RUN npm run build && test -f dist/index.html
+
+
 FROM python:3.11-slim
 
 # tini reaps zombies and forwards SIGTERM so uvicorn shuts down cleanly.
@@ -46,6 +63,12 @@ COPY admin/          ./admin/
 RUN rm -rf /app/admin/frontend/dist
 
 COPY --from=frontend /app/admin/frontend/dist /app/admin/frontend/dist
+
+# The Mini App bundle comes from the node stage, so a stale local build in the
+# context cannot shadow it.
+RUN rm -rf /app/mini-app/dist
+COPY mini-app/        ./mini-app/
+COPY --from=miniapp /app/mini-app/dist /app/mini-app/dist
 
 # The Jinja2 panel is gone; fail the build if it creeps back in.
 RUN rm -f /app/admin/templates.py \

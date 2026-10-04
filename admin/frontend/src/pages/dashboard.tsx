@@ -149,13 +149,13 @@ export function DashboardPage({ onRefresh }: { onRefresh: () => void }): JSX.Ele
           <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />
           {isFetching ? 'Refreshing…' : 'Refresh'}
         </Button>
-        <Link to="/admin/targets">
+        <Link to="/targets">
           <Button size="sm" variant="outline">
             <PlusCircle className="h-4 w-4" />
             Add target
           </Button>
         </Link>
-        <Link to="/admin/audit">
+        <Link to="/audit">
           <Button size="sm" variant="ghost">
             <ScrollText className="h-4 w-4" />
             View audit
@@ -282,7 +282,7 @@ export function DashboardPage({ onRefresh }: { onRefresh: () => void }): JSX.Ele
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Recent activity</CardTitle>
-            <Link to="/admin/audit" className="link text-xs">
+            <Link to="/audit" className="link text-xs">
               View all
             </Link>
           </CardHeader>

@@ -136,5 +136,9 @@
   "error.cleanup_failed": "⚠� پاک‌سازی ناموفق بود: {error}.\nهیچ داده‌ای حذف نشد — اپراتور باید لاگ‌ها را بررسی کند.",
   "error.delete_failed": "⚠️ حذف «{target}» ممکن نشد: {error}.\nاپراتور باید لاگ‌ها را بررسی کند.",
   "error.rate_limited": "⏱ {reason}",
-  "scan.blocked_by_rule": "🚫 اسکن توسط سیاست مسدود شد\n  دلیل : {reason}\n  قانون: {rule}"
+  "scan.blocked_by_rule": "🚫 اسکن توسط سیاست مسدود شد\n  دلیل : {reason}\n  قانون: {rule}",
+  "app.button": "📱 باز کردن داشبورد",
+  "app.unavailable": "📱 داشبورد هنوز روی این ربات تنظیم نشده است.\nاپراتور باید MINIAPP_URL را تنظیم کند.",
+  "app.opened_hint": "برای باز کردن داشبورد، دکمهٔ زیر را بزنید.",
+  "app.title": "داشبورد NetSentinel"
 }

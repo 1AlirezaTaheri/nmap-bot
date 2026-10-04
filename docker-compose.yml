@@ -70,6 +70,31 @@ services:
     stop_grace_period: 20s
     restart: unless-stopped
 
+  # Cloudflare quick tunnel: gives the Mini App a public HTTPS origin without
+  # a domain, a certificate or port forwarding. Telegram refuses to load a
+  # Mini App over plain HTTP, so *something* has to terminate TLS.
+  #
+  # The trycloudflare.com hostname changes whenever this container restarts.
+  # Read the current one with:
+  #   docker compose logs tunnel | grep -o 'https://[-a-z0-9]*.trycloudflare.com'
+  # then set MINIAPP_URL to that value (no trailing slash) in .env and run:
+  #   docker compose up -d --force-recreate bot admin
+  tunnel:
+    image: cloudflare/cloudflared:2024.10.0
+    command: tunnel --no-autoupdate --url http://admin:8080
+    depends_on:
+      admin:
+        condition: service_healthy
+    restart: unless-stopped
+    # No ports published: the tunnel is outbound-only, which is why it works
+    # behind NAT without any firewall change.
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "--help"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
 volumes:
   dbdata:
   logs:

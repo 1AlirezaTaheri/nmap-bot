@@ -8,6 +8,50 @@ semantic versioning loosely.
 
 ### Added
 
+**Telegram Mini App**
+- `core/miniapp_auth.py` verifies Telegram's `initData` signature:
+  `HMAC_SHA256(key="WebAppData", msg=bot_token)` over the sorted, newline-joined
+  `key=value` pairs, compared with `hmac.compare_digest`. Pure — no database,
+  no network, no Telegram client — so the security boundary is directly
+  testable. The signature is checked *before* freshness (otherwise a forged
+  blob could probe the age limit) and a future `auth_date` is refused rather
+  than treated as fresh.
+- `admin/routes/miniapp.py` serves `/miniapp/*`: identity, dashboard stats,
+  targets, target scans and changes, scan requests, change events, rules
+  (read-only), a rule dry run, profiles and per-user settings. Every read
+  reuses the existing services and repositories, so the Mini App cannot
+  disagree with the bot or the web panel about what the database says.
+- Authorization layers on top of authentication: `ALLOWED_USER_IDS` (a
+  correctly signed blob from a stranger is a `403`), the
+  `telegram_users.enabled` flag, and the `operator` role for writes. The
+  `enabled` check lives in the auth dependency, not in the write handlers —
+  in the handlers it left every read open for a disabled account.
+- `/miniapp/me` upserts the `telegram_users` row. A user in
+  `ALLOWED_USER_IDS` who has never run `/start` has no row, because only the
+  bot's startup syncs them, and the settings form needs one.
+- `PATCH /miniapp/settings` validates the language's primary subtag instead of
+  passing it through `normalize_lang`, which coerces anything unknown to the
+  default — that turned a legitimate `en-US` into `fa` with a `200`.
+- `MINIAPP_URL` gates every affordance. Telegram cannot load an `http://` Mini
+  App, so a non-HTTPS or empty value disables the menu button, `/app` and the
+  `/start` button instead of advertising a button that opens a blank WebView.
+- `admin/Dockerfile` gains a `node:20-alpine` stage that builds
+  `mini-app/dist`; the runtime image still has no Node in it.
+- `bot/miniapp.py` centralises the affordances so `/start`, `/app` and the
+  menu button cannot drift on what "configured" means. The menu button is set
+  in `post_init` (the bot object does not exist before then) and both calls
+  swallow their own failures, so a menu button that could not be set never
+  stops the bot answering `/scan`.
+- `docker-compose.yml` gains a `cloudflared` quick tunnel: HTTPS for the Mini
+  App with no domain, no certificate and no port forwarding.
+- Frontend in `mini-app/`: Vite, React 18, TypeScript (`strict`), Tailwind,
+  TanStack Query, Recharts, `@twa-dev/sdk`. Six tabs behind a bottom tab bar.
+  Every colour is a CSS variable fed from `themeParams`, so Telegram themes
+  the app with no conditional classes and no flash. 211 KB gzipped.
+- `tests/test_miniapp.py`: 62 tests over the signature scheme (forged,
+  tampered, stale, future-dated, wrong bot token), the allow-list, disabled
+  accounts, role gating, settings validation and the dry run.
+
 **Rule engine**
 - `core/rule_values.py` parses and matches each rule type. Every parser is
   total: a normalized value or `ValueError`, so a malformed rule is skipped

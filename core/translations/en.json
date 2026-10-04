@@ -136,5 +136,9 @@
   "error.cleanup_failed": "⚠️ Cleanup failed: {error}.\nNothing was deleted — the operator should check the bot logs.",
   "error.delete_failed": "⚠️ Could not delete '{target}': {error}.\nThe operator should check the bot logs.",
   "error.rate_limited": "⏱ {reason}",
-  "scan.blocked_by_rule": "🚫 Scan blocked by policy\n  reason : {reason}\n  rule   : {rule}"
+  "scan.blocked_by_rule": "🚫 Scan blocked by policy\n  reason : {reason}\n  rule   : {rule}",
+  "app.button": "📱 Open the dashboard",
+  "app.unavailable": "📱 The dashboard is not configured on this bot yet.\nThe operator has to set MINIAPP_URL.",
+  "app.opened_hint": "Tap the button below to open the dashboard.",
+  "app.title": "NetSentinel dashboard"
 }
