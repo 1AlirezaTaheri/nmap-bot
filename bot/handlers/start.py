@@ -34,7 +34,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings = context.application.bot_data.get("settings")
 
     # Remember where scheduled alerts should go.
+    #
+    # This is audited: the operator chat is the destination for every
+    # scheduled alert, so silently redirecting it would misdirect output with
+    # no trace. /start previously performed this privileged write with no
+    # audit row at all, unlike every other mutating handler.
     try:
+        from admin.services import audit as audit_service
         from database.repository import OperatorChatRepository
 
         chat = update.effective_chat
@@ -43,6 +49,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 chat_id=chat.id,
                 user_id=principal.user_id,
                 username=principal.username,
+            )
+            audit_service.record(
+                session,
+                audit_service.AuditEntry(
+                    action="operator_chat.registered",
+                    actor_type=audit_service.ACTOR_TELEGRAM,
+                    actor_id=principal.user_id,
+                    actor_username=principal.username,
+                    details={"chat_id": chat.id},
+                ),
             )
     except Exception:
         # Never let bookkeeping stop the greeting.

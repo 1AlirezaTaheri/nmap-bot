@@ -24,6 +24,32 @@ _HOSTNAME_RE = re.compile(
 _REJECTED_CHARS = set(" \t\n\r;&|<>()$`\\\"'!*?[]{}#~%")
 
 
+# Ranges that are never a legitimate scan target, refused whether or not a
+# scope allow-list is configured. Without this, in_scope() returned True for
+# everything when ALLOWED_CIDRS was empty, which made the cloud metadata
+# endpoint (169.254.169.254), the scanner's own loopback interface, and the
+# catch-all 0.0.0.0/0 all scannable on a default install.
+#
+# "This host" (0.0.0.0/8 and ::/128) is included because nmap treats it as a
+# local-subnet sweep. IPv6 link-local and loopback are the v6 equivalents of
+# the v4 ranges above.
+_ALWAYS_DENIED_NETWORKS = (
+    "127.0.0.0/8",
+    "::1/128",
+    "169.254.0.0/16",
+    "fe80::/10",
+    "0.0.0.0/8",
+    "::/128",
+)
+
+# Parsed once at import: ip_network() is not free and is_always_denied()
+# runs on every scope check. Defined here, immediately after the strings
+# it consumes -- building it earlier raised NameError at import time.
+_ALWAYS_DENIED = tuple(
+    ipaddress.ip_network(c) for c in _ALWAYS_DENIED_NETWORKS
+)
+
+
 class TargetValidationError(ValueError):
     """Raised when a scan target is malformed or rejected by policy."""
 
@@ -72,20 +98,53 @@ def validate_target(raw: str) -> str:
     raise TargetValidationError(f"Not a valid IP, CIDR, or hostname: {target}")
 
 
-def in_scope(target: str, allowed_cidrs: tuple[str, ...]) -> bool:
-    """Return True if ``target`` falls inside any of ``allowed_cidrs``.
+def is_always_denied(candidate: str) -> bool:
+    """True if ``candidate`` is loopback, link-local, "this host" or catch-all.
 
-    Hostnames can never be proven in-scope without resolving them, so they
-    are rejected when scope restrictions are configured — a conservative
-    default that fails closed rather than open.
+    Checked before any allow-list, so it applies on a default install where
+    ``ALLOWED_CIDRS`` is empty. A hostname returns False because it cannot be
+    judged without resolving it, and resolving here would reintroduce the DNS
+    dependency the rule engine deliberately avoids.
     """
+    try:
+        if "/" in candidate:
+            net = ipaddress.ip_network(candidate, strict=False)
+            return any(
+                net.version == denied.version and net.overlaps(denied)
+                for denied in _ALWAYS_DENIED
+            )
+        addr = ipaddress.ip_address(candidate)
+        return any(
+            addr in denied for denied in _ALWAYS_DENIED
+            if denied.version == addr.version
+        )
+    except ValueError:
+        return False
+
+
+def in_scope(target: str, allowed_cidrs: tuple[str, ...]) -> bool:
+    """Return True if ``target`` is permitted to be scanned.
+
+    Loopback, link-local (including the 169.254.169.254 metadata endpoint),
+    "this host" and catch-all ranges are always refused. Beyond that, when
+    ``allowed_cidrs`` is empty anything not on that list is permitted, which
+    preserves the original ad-hoc-scanning behaviour.
+
+    Hostnames can never be proven in-scope without resolving them, so they are
+    rejected when scope restrictions are configured -- a conservative default
+    that fails closed rather than open.
+    """
+    candidate = target.strip()
+    if candidate.startswith("[") and candidate.endswith("]"):
+        candidate = candidate[1:-1]
+
+    if is_always_denied(candidate):
+        return False
+
     if not allowed_cidrs:
         return True
 
     nets = [ipaddress.ip_network(c, strict=False) for c in allowed_cidrs]
-    candidate = target.strip()
-    if candidate.startswith("[") and candidate.endswith("]"):
-        candidate = candidate[1:-1]
 
     try:
         if "/" in candidate:

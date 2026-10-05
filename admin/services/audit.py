@@ -32,6 +32,7 @@ ACTIONS = (
     "user.add",
     "user.update",
     "user.delete",
+    "operator_chat.registered",
     "settings.update",
     "target.add",
     "target.delete",

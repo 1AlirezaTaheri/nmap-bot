@@ -14,6 +14,5 @@ pydantic>=2.6,<3
 python-multipart>=0.0.9
 httpx>=0.26,<1
 
-# --- dev / test ---
-pytest>=8,<9
-pytest-asyncio>=0.23,<1
+# Test tooling lives in requirements-dev.txt so it stays out of the runtime
+# images. Install both to run the suite: docker/verify.sh does this for you.

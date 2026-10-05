@@ -121,6 +121,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Applied here rather than inside the lifespan so the middleware is in
+    # place before any route or mount is registered, and therefore wraps
+    # the SPA mounts and /miniapp as well as /api.
+    add_security_headers(app, settings)
+
     from security.authorization import Authorizer
 
     ctx = AdminContext(
@@ -353,3 +358,63 @@ def _mount_mini_app(app: FastAPI) -> None:
 
     app.include_router(mini_router)
     log.info("Serving Mini App from %s", MINIAPP_DIST)
+
+
+# ---------------------------------------------------------------------------
+# Security headers
+# ---------------------------------------------------------------------------
+
+# script-src must name https://telegram.org: the Mini App loads the Telegram
+# WebApp SDK from there, and a bare 'self' blocks the one script it cannot
+# work without. This is the single deviation from the policy originally
+# proposed for this change, and it is deliberate -- a CSP that is not tested
+# against the real pages is not hardening, it is an outage.
+#
+# style-src carries 'unsafe-inline' because the login page sets an inline
+# background gradient through the style attribute.
+#
+# frame-ancestors 'none' plus X-Frame-Options: DENY keep the panel out of
+# anyone else's iframe (clickjacking).
+CSP = (
+    "default-src 'self'; "
+    "script-src 'self' https://telegram.org; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "font-src 'self' data:; "
+    "connect-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'; "
+    "frame-ancestors 'none'"
+)
+
+
+def add_security_headers(app: FastAPI, settings: Settings) -> None:
+    """Attach conservative security headers to every response.
+
+    Strict-Transport-Security is emitted only when ADMIN_COOKIE_SECURE is
+    true. The panel is normally reached over plain HTTP on the LAN, and
+    advertising HSTS there would pin the browser to https and lock the
+    operator out of their own panel with no way back.
+    """
+
+    @app.middleware("http")
+    async def _security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "same-origin")
+        response.headers.setdefault("Content-Security-Policy", CSP)
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "geolocation=(), microphone=(), camera=(), payment=()",
+        )
+        response.headers.setdefault(
+            "Cross-Origin-Opener-Policy", "same-origin"
+        )
+        if getattr(settings, "admin_cookie_secure", False):
+            response.headers.setdefault(
+                "Strict-Transport-Security",
+                "max-age=31536000; includeSubDomains",
+            )
+        return response
