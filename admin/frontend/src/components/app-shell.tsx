@@ -29,7 +29,7 @@ interface NavItem {
 // link here must be written as "/" or "/users", never "/admin/users".
 const NAV: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
-  { to: '/users', label: 'Users', icon: UsersIcon },
+  { to: '/telegram-users', label: 'Telegram Users', icon: UsersIcon },
   { to: '/targets', label: 'Targets', icon: Network },
   { to: '/audit', label: 'Audit Log', icon: ScrollText },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },

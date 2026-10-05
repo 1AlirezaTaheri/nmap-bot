@@ -9,7 +9,7 @@ import { TooltipProvider } from '@/components/ui'
 import { Spinner } from '@/components/feedback'
 import { LoginPage } from '@/pages/login'
 import { DashboardPage } from '@/pages/dashboard'
-import { UsersPage } from '@/pages/users'
+import { TelegramUsersPage } from '@/pages/telegram-users'
 import { TargetsPage } from '@/pages/targets'
 import { AuditPage } from '@/pages/audit'
 import { SettingsPage } from '@/pages/settings'
@@ -78,7 +78,9 @@ function Shell(): JSX.Element {
       <React.Fragment key={tick}>
         <Routes>
           <Route path="/" element={<DashboardPage onRefresh={refresh} />} />
-          <Route path="/users" element={<UsersPage />} />
+          <Route path="/telegram-users" element={<TelegramUsersPage />} />
+          {/* Old bookmark still works. */}
+          <Route path="/users" element={<Navigate to="/telegram-users" replace />} />
           <Route path="/targets" element={<TargetsPage />} />
           <Route path="/audit" element={<AuditPage />} />
           <Route path="/settings" element={<SettingsPage />} />

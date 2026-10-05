@@ -122,6 +122,11 @@ export interface TelegramUser {
   username: string | null
   role: TelegramRole
   enabled: boolean
+  /** The id also appears in ALLOWED_USER_IDS in .env. Without both this
+   *  and `enabled`, the bot refuses the user at authenticate_or_denounce. */
+  in_allow_list: boolean
+  /** enabled AND in_allow_list: whether the bot will actually admit them. */
+  effective_access: boolean
   language: Language
   timezone: string | null
   notifications_enabled: boolean
@@ -309,15 +314,25 @@ export const api = {
     request<{ ok: boolean }>('/password', { method: 'POST', body: { password } }),
 
   listUsers: (signal?: AbortSignal) =>
-    request<{ users: TelegramUser[] }>('/users', signal ? { signal } : {}),
+    request<{ users: TelegramUser[]; allow_list_size: number }>(
+      '/telegram-users',
+      signal ? { signal } : {},
+    ),
 
   addUser: (body: {
     telegram_user_id: number
     username?: string | null
     role?: TelegramRole
     language?: Language
-  }) => request<{ telegram_user_id: number; role: TelegramRole; language: Language }>(
-    '/users',
+  }) => request<{
+    telegram_user_id: number
+    role: TelegramRole
+    language: Language
+    enabled: boolean
+    in_allow_list: boolean
+    effective_access: boolean
+  }>(
+    '/telegram-users',
     { method: 'POST', body },
   ),
 
@@ -332,12 +347,14 @@ export const api = {
     }>,
   ) =>
     request<{ telegram_user_id: number; role: TelegramRole; language: Language; enabled: boolean }>(
-      `/users/${id}`,
+      `/telegram-users/${id}`,
       { method: 'PATCH', body: patch },
     ),
 
   deleteUser: (id: number) =>
-    request<{ ok: boolean }>(`/users/${id}?confirm=true`, { method: 'DELETE' }),
+    request<{ ok: boolean }>(`/telegram-users/${id}?confirm=true`, {
+      method: 'DELETE',
+    }),
 
   audit: (filters: AuditFilters, signal?: AbortSignal) =>
     request<AuditPage>(`/audit${toQuery(filters)}`, signal ? { signal } : {}),

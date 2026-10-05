@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { formatDistanceToNow } from 'date-fns'
-import { Copy, Search, Trash2, UserPlus } from 'lucide-react'
+import { Copy, Info, Search, Trash2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { z } from 'zod'
 import { api, type TelegramUser, type TelegramRole, type Language } from '@/lib/api'
@@ -100,8 +100,18 @@ interface NewUserPayload {
   role: TelegramRole
 }
 
-export function UsersPage(): JSX.Element {
+export function TelegramUsersPage(): JSX.Element {
   const queryClient = useQueryClient()
+
+  // The server is the authority on roles; this only decides whether to
+  // offer Add/Delete, which are superadmin-only. An admin would only get
+  // a 403 from those, so showing the control would be a dead end.
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => api.me(signal),
+    staleTime: 60_000,
+  })
+  const isSuperadmin = me?.role === 'superadmin'
   const [search, setSearch] = React.useState('')
   const [debounced, setDebounced] = React.useState('')
   const [filter, setFilter] = React.useState<Filter>('all')
@@ -159,8 +169,16 @@ export function UsersPage(): JSX.Element {
 
   const create = useMutation({
     mutationFn: api.addUser,
-    onSuccess: () => {
-      toast.success('User added')
+    onSuccess: (created) => {
+      // Being in this table is not the same as being able to use the bot.
+      // Say which one happened rather than a bare "added".
+      if (created.in_allow_list) {
+        toast.success('User added and allowed by the bot')
+      } else {
+        toast.warning(
+          'Added, but the ID is not in ALLOWED_USER_IDS — the bot will refuse them until it is',
+        )
+      }
       setAddOpen(false)
       void queryClient.invalidateQueries({ queryKey: ['users'] })
     },
@@ -289,24 +307,55 @@ export function UsersPage(): JSX.Element {
         ),
     },
     {
+      key: 'access',
+      header: 'Bot access',
+      sortable: true,
+      sortValue: (u) => (u.effective_access ? 1 : 0),
+      cell: (u) => {
+        if (u.effective_access) {
+          return (
+            <Badge variant="success" title="Enabled and listed in ALLOWED_USER_IDS">
+              Active
+            </Badge>
+          )
+        }
+        if (!u.enabled) {
+          return (
+            <Badge variant="muted" title="Disabled in this panel; the bot refuses them">
+              Disabled
+            </Badge>
+          )
+        }
+        return (
+          <Badge
+            variant="warning"
+            title="Enabled here, but the ID is not in ALLOWED_USER_IDS in .env, so the bot will refuse them"
+          >
+            Not allowed
+          </Badge>
+        )
+      },
+    },
+    {
       key: 'actions',
       header: '',
       className: 'text-right',
-      cell: (u) => (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 text-muted hover:text-danger"
-          aria-label="Remove user"
-          onClick={() => {
-            if (window.confirm(`Remove ${u.username ?? u.telegram_user_id}?`)) {
-              remove.mutate(u.telegram_user_id)
-            }
-          }}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
-      ),
+      cell: (u) =>
+        isSuperadmin ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted hover:text-danger"
+            aria-label="Remove user"
+            onClick={() => {
+              if (window.confirm(`Remove ${u.username ?? u.telegram_user_id}?`)) {
+                remove.mutate(u.telegram_user_id)
+              }
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        ) : null,
     },
   ]
 
@@ -322,10 +371,27 @@ export function UsersPage(): JSX.Element {
             onChange={(event) => setSearch(event.target.value)}
           />
         </div>
-        <Button onClick={() => setAddOpen(true)}>
-          <UserPlus className="h-4 w-4" />
-          Add user
-        </Button>
+        {isSuperadmin ? (
+          <Button onClick={() => setAddOpen(true)}>
+            <UserPlus className="h-4 w-4" />
+            Add user
+          </Button>
+        ) : null}
+      </div>
+
+      {/* The bot enforces two independent gates, and only one of them lives
+          in this table. Without saying so, an operator can enable someone
+          here and still be refused by the bot with "auth.denied". */}
+      <div className="flex items-start gap-2 rounded-md border border-info/30 bg-info-soft px-3 py-2 text-xs text-info">
+        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <p>
+          A user needs <strong>two</strong> things to reach the bot: the{' '}
+          <strong>Bot access</strong> column must read <em>Active</em>, and their
+          ID must also be listed in <code className="font-mono">ALLOWED_USER_IDS</code>{' '}
+          in <code className="font-mono">.env</code>{' '}
+          ({data?.allow_list_size ?? 0} id(s) allowed). This panel never edits
+          that file — changing it needs a bot restart to take effect.
+        </p>
       </div>
 
       <div className="flex flex-wrap gap-1.5">

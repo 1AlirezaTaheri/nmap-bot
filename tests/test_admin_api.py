@@ -291,7 +291,12 @@ class TestUsersApi:
 
     def test_user_action_is_audited(self, auth_client):
         auth_client.post("/api/users", json={"telegram_user_id": 222})
-        resp = auth_client.get("/api/audit", params={"action": "user.add"})
+        # Deliberate rename: the telegram-user surface emits
+        # telegram_user.created, not user.add, which is now ambiguous next to
+        # the separate admin_users identity store.
+        resp = auth_client.get(
+            "/api/audit", params={"action": "telegram_user.created"}
+        )
         assert resp.json()["total"] >= 1
 
 
@@ -413,7 +418,9 @@ class TestAuditApi:
 
     def test_filter_by_action(self, auth_client):
         auth_client.post("/api/users", json={"telegram_user_id": 333})
-        resp = auth_client.get("/api/audit", params={"action": "user.add"})
+        resp = auth_client.get(
+            "/api/audit", params={"action": "telegram_user.created"}
+        )
         assert resp.json()["total"] >= 1
 
     def test_filter_by_success(self, auth_client):

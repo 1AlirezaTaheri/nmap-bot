@@ -32,6 +32,12 @@ ACTIONS = (
     "user.add",
     "user.update",
     "user.delete",
+    # Added for the Telegram-user management surface. The older
+    # user.add/update/delete above stay in the vocabulary because
+    # audit_log is append-only and historical rows already use them.
+    "telegram_user.created",
+    "telegram_user.updated",
+    "telegram_user.deleted",
     "operator_chat.registered",
     "settings.update",
     "target.add",

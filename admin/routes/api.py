@@ -44,7 +44,9 @@ class PasswordBody(BaseModel):
 
 
 class TelegramUserBody(BaseModel):
-    telegram_user_id: int
+    # gt=0: a Telegram user id is a positive integer. A bare `int` accepted
+    # 0 and negatives, producing rows the bot could never match.
+    telegram_user_id: int = Field(gt=0)
     username: str | None = Field(default=None, max_length=64)
     role: str | None = None
     language: str | None = None
@@ -247,16 +249,38 @@ async def change_password(request: Request, body: PasswordBody,
 # ---------------------------------------------------------------------------
 
 
-@router.get("/users")
+@router.get("/users", deprecated=True)
+@router.get("/telegram-users")
 async def list_users(request: Request, principal=Depends(require_role("admin"))):
+    """Telegram users, annotated with real bot access.
+
+    `in_allow_list` and `effective_access` exist because the bot enforces two
+    independent gates: the telegram_users row must be enabled AND the id must
+    appear in ALLOWED_USER_IDS. Without these an operator could enable a user
+    who the bot would still refuse with "auth.denied" and no explanation.
+    """
     context = ctx(request)
+    allowed = set(context.settings.allowed_user_ids)
     with context.database.session() as session:
-        return {"users": user_service.list_telegram_users(session)}
+        rows = user_service.list_telegram_users(session)
+    for row in rows:
+        row["in_allow_list"] = row["telegram_user_id"] in allowed
+        row["effective_access"] = bool(row["enabled"]) and row["in_allow_list"]
+    return {"users": rows, "allow_list_size": len(allowed)}
 
 
-@router.post("/users")
+@router.post("/users", deprecated=True)
+@router.post("/telegram-users")
 async def add_user(request: Request, body: TelegramUserBody,
-                   principal=Depends(require_role("admin"))):
+                   principal=Depends(require_role("superadmin"))):
+    """Create a Telegram user. superadmin only: this grants bot access.
+
+    Deliberately does NOT touch ALLOWED_USER_IDS. That file is the bot's own
+    gate, editing it from the panel would need a bot restart to take effect,
+    and the requirement is to leave it untouched. The response reports
+    `in_allow_list` so the panel can say plainly that access is still
+    pending rather than implying it was granted.
+    """
     context = ctx(request)
     with context.database.session() as session:
         if user_service.get_telegram_user(session, body.telegram_user_id) is not None:
@@ -274,7 +298,7 @@ async def add_user(request: Request, body: TelegramUserBody,
         audit_service.record(
             session,
             audit_service.AuditEntry(
-                action="user.add",
+                action="telegram_user.created",
                 actor_id=principal.id,
                 actor_username=principal.username,
                 actor_type=audit_service.ACTOR_ADMIN,
@@ -284,11 +308,15 @@ async def add_user(request: Request, body: TelegramUserBody,
                 ip_address=client_ip(request),
             ),
         )
+        in_allow = row.telegram_user_id in set(context.settings.allowed_user_ids)
         return {"telegram_user_id": row.telegram_user_id, "role": row.role,
-                "language": row.language}
+                "language": row.language, "enabled": row.enabled,
+                "in_allow_list": in_allow,
+                "effective_access": bool(row.enabled) and in_allow}
 
 
-@router.patch("/users/{telegram_user_id}")
+@router.patch("/users/{telegram_user_id}", deprecated=True)
+@router.patch("/telegram-users/{telegram_user_id}")
 async def patch_user(request: Request, telegram_user_id: int,
                      body: TelegramUserPatch,
                      principal=Depends(require_role("admin"))):
@@ -310,7 +338,7 @@ async def patch_user(request: Request, telegram_user_id: int,
         audit_service.record(
             session,
             audit_service.AuditEntry(
-                action="user.update",
+                action="telegram_user.updated",
                 actor_id=principal.id,
                 actor_username=principal.username,
                 actor_type=audit_service.ACTOR_ADMIN,
@@ -320,19 +348,28 @@ async def patch_user(request: Request, telegram_user_id: int,
                 ip_address=client_ip(request),
             ),
         )
+        in_allow = row.telegram_user_id in set(context.settings.allowed_user_ids)
         return {
             "telegram_user_id": row.telegram_user_id,
             "role": row.role,
             "language": row.language,
             "enabled": row.enabled,
             "notifications_enabled": row.notifications_enabled,
+            "in_allow_list": in_allow,
+            "effective_access": bool(row.enabled) and in_allow,
         }
 
 
-@router.delete("/users/{telegram_user_id}")
+@router.delete("/users/{telegram_user_id}", deprecated=True)
+@router.delete("/telegram-users/{telegram_user_id}")
 async def delete_user(request: Request, telegram_user_id: int,
                       confirm: bool = False,
-                      principal=Depends(require_role("admin"))):
+                      principal=Depends(require_role("superadmin"))):
+    """Remove a Telegram user. superadmin only.
+
+    The row is discarded entirely, so any telegram role the operator held
+    is lost with it.
+    """
     context = ctx(request)
     with context.database.session() as session:
         if not confirm:
@@ -344,7 +381,7 @@ async def delete_user(request: Request, telegram_user_id: int,
         audit_service.record(
             session,
             audit_service.AuditEntry(
-                action="user.delete",
+                action="telegram_user.deleted",
                 actor_id=principal.id,
                 actor_username=principal.username,
                 actor_type=audit_service.ACTOR_ADMIN,
