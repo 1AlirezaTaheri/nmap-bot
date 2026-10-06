@@ -55,7 +55,33 @@ def main() -> int:
     host = os.environ.get("ADMIN_HOST", "0.0.0.0")
     port = settings.admin_port
     log.info("Starting admin panel on %s:%s", host, port)
-    uvicorn.run(app, host=host, port=port, log_level="info", access_log=False)
+
+    # proxy_headers must follow the same switch as the application's
+    # own client_ip(). Uvicorn's middleware rewrites scope["client"]
+    # from X-Forwarded-For *before* the app runs, so leaving it on by
+    # default meant ADMIN_TRUST_FORWARDED_FOR=false did not actually
+    # stop header trust -- it only stopped the app's second opinion.
+    # Anything else would let a client pick its own rate-limit bucket.
+    trust_forwarded = bool(getattr(settings, "admin_trust_forwarded_for", False))
+    if trust_forwarded:
+        log.warning(
+            "ADMIN_TRUST_FORWARDED_FOR is enabled: client IPs are taken "
+            "from X-Forwarded-For. Only correct when a trusted proxy "
+            "overwrites that header and nothing else can reach this port."
+        )
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level="info",
+        access_log=False,
+        proxy_headers=trust_forwarded,
+        # Empty unless explicitly configured: the default trusts the whole
+        # loopback range, which includes any process on this host.
+        forwarded_allow_ips=(
+            os.environ.get("FORWARDED_ALLOW_IPS", "") if trust_forwarded else None
+        ),
+    )
     return 0
 
 

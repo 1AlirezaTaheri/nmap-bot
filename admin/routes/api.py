@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from admin.services import audit as audit_service
+
 from admin.services import auth as auth_service
 from admin.services import stats as stats_service
 from admin.services import users as user_service
@@ -23,6 +24,10 @@ from security.targets import TargetValidationError, validate_target
 
 log = logging.getLogger(__name__)
 router = APIRouter()
+
+# Telegram user IDs are 32-bit today and documented to stay inside
+# 52 bits. See the Field() bound below that depends on this.
+MAX_TELEGRAM_USER_ID = 2 ** 52
 
 
 def ctx(request: Request) -> AdminContext:
@@ -46,7 +51,10 @@ class PasswordBody(BaseModel):
 class TelegramUserBody(BaseModel):
     # gt=0: a Telegram user id is a positive integer. A bare `int` accepted
     # 0 and negatives, producing rows the bot could never match.
-    telegram_user_id: int = Field(gt=0)
+    # Telegram IDs fit well inside 52 bits. The upper bound is what
+    # keeps an absurd value out of PostgreSQL, where it would be an
+    # unhandled `bigint out of range` DataError and a 500.
+    telegram_user_id: int = Field(gt=0, le=MAX_TELEGRAM_USER_ID)
     username: str | None = Field(default=None, max_length=64)
     role: str | None = None
     language: str | None = None

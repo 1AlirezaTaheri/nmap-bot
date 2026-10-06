@@ -152,9 +152,19 @@ def validate_init_data(
     if not fields:
         raise MiniAppAuthError("malformed", "initData is not a query string")
 
-    supplied_hash = next((value for key, value in fields if key == "hash"), None)
-    if not supplied_hash:
+    hashes = [value for key, value in fields if key == "hash"]
+    if not hashes:
         raise MiniAppAuthError("no_hash", "initData carries no hash")
+    if len(hashes) > 1:
+        # Telegram sends exactly one. build_check_string() drops every
+        # `hash` field, so a trailing duplicate is invisible to the
+        # check string and only the first value is compared. A parser
+        # that took the last would disagree with this one, so the blob
+        # is refused rather than resolved by precedence.
+        raise MiniAppAuthError(
+            "duplicate_hash", "initData carries more than one hash"
+        )
+    supplied_hash = hashes[0]
 
     expected = compute_signature(bot_token, build_check_string(fields))
     if not hmac.compare_digest(expected, supplied_hash):

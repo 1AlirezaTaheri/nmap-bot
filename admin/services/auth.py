@@ -116,7 +116,16 @@ def decode_token(token: str) -> Principal:
     if not token:
         raise AuthError("No token supplied.")
     try:
-        payload = jwt.decode(token, secret_key(), algorithms=[ALGORITHM])
+        payload = jwt.decode(
+            token,
+            secret_key(),
+            algorithms=[ALGORITHM],
+            # PyJWT only checks `exp` when the claim is present, so a
+            # signed token that omits it would never expire. There is
+            # no revocation list to fall back on, so the claims are
+            # required rather than merely validated.
+            options={"require": ["exp", "iat", "sub"]},
+        )
     except jwt.ExpiredSignatureError as exc:
         raise AuthError("Session expired. Please sign in again.") from exc
     except jwt.InvalidTokenError as exc:
