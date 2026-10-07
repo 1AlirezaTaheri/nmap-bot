@@ -1,0 +1,135 @@
+# Caddy as a TLS terminator in front of the NetSentinel admin panel.
+#
+# Purpose: the admin service speaks only plain HTTP. That is fine inside the
+# Docker network but not for anything a browser or an SSH-tunnel client
+# touches, because the session cookie and the bearer token would cross the
+# network in clear text. Caddy gives the panel a real HTTPS origin without
+# changing the application.
+#
+# Certificates come from Caddy's *internal* CA. There is no domain pointed at
+# this host, so a public certificate is not obtainable. An internal CA means
+# the certificate is genuinely issued and genuinely valid, but it is trusted
+# only by clients that have been given Caddy's root (instructions below).
+# Until then the browser warns -- expected, and the reason for the trust step
+# rather than an attempt to work around it.
+#
+# ---------------------------------------------------------------------------
+# Trusting the internal CA on a client
+# ---------------------------------------------------------------------------
+# The root lives in the caddy_data volume:
+#
+#   docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .
+#
+#   Linux:   cp root.crt /usr/local/share/ca-certificates/netsentinel.crt
+#            update-ca-certificates
+#   Windows: Import-Certificate -FilePath root.crt `
+#              -CertStoreLocation CertStore:\Root
+#   macOS:   double-click root.crt in Keychain Access -> "System" -> trust
+#
+# Then https://netsentinel.local:8443/admin verifies with no warning.
+#
+# Deleting the caddy_data volume discards this CA. Every client that was
+# given the old root must be re-trusted, and Caddy issues a new one.
+#
+# ---------------------------------------------------------------------------
+# Why these hostnames, and why this many of them
+# ---------------------------------------------------------------------------
+# A certificate is valid only for the names in its SAN list, so every address
+# an operator might actually type has to appear:
+#
+#   netsentinel.local  the name to use
+#   127.0.0.1          reached through an SSH tunnel
+#   192.168.174.128    the LAN address, from another machine
+#   172.18.0.6         Caddy's own address on the Docker network
+#
+# That last one is not cosmetic. A client connecting to an IP literal sends
+# no SNI, so Caddy has nothing to match the certificate against and falls
+# back to the address the connection actually arrived on -- the container's
+# own IP. Verified in the DEBUG log before this name was added:
+#
+#   no certificate matching TLS ClientHello ... identifier: 172.18.0.6
+#   http: TLS handshake error: no certificate available for '172.18.0.6'
+#
+# With no SAN for it, `curl https://127.0.0.1:8443` failed with a TLS
+# internal-error alert even though the client had asked for 127.0.0.1.
+#
+# The Docker subnet is fixed in docker-compose.yml so this address stays
+# valid across restarts. Change one and you must change the other.
+
+{
+	# `auto_https off` is DELIBERATELY NOT set.
+	#
+	# An earlier version of this file had it, on the reasoning that there is
+	# no public domain so there is nothing to automate. That reasoning is
+	# wrong, and the cost was a service that could not serve TLS at all:
+	#
+	#   http.auto_https: all servers have automatic HTTPS disabled and no
+	#   domains need certificates, skipping TLS automation setup
+	#   tls.handshake: no certificate matching TLS ClientHello
+	#   http.stdlib: TLS handshake error: no certificate available
+	#
+	# `auto_https off` disables the whole TLS automation pipeline, and
+	# `tls internal` inside a site block does not bring it back: the
+	# `tls internal` directive names the issuer, but the automation that
+	# actually calls it is set up by auto_https. So Caddy listened on :8443
+	# and answered every request with a TLS alert, while its healthcheck
+	# reported healthy -- the check only confirms the admin API answers, not
+	# that a handshake succeeds.
+	#
+	# Leaving it on costs nothing here: the site block names explicit https://
+	# addresses on port 8443, so Caddy provisions certificates for exactly
+	# those and does not bind :80 or add redirects.
+
+	# Access logs are OFF, and the reason is not verbosity: every request to
+	# the panel would otherwise be written to the container's stdout, where
+	# `docker compose logs` and any log shipper would retain the full request
+	# line and headers. /api/login carries the password in its body and every
+	# authenticated response sets the session cookie in a header. Caddy logs
+	# request lines and headers, so an access log here is a credential log.
+	#
+	# The application already keeps an audit log of the requests that matter
+	# (logins, writes, refusals) in the database. That is the better arrival
+	# record, and it does not duplicate what Caddy would capture anyway.
+	#
+	# The level goes here rather than in a `log` block inside the site, where
+	# Caddy rejects a second `level` subdirective outright and the container
+	# crash-loops on start.
+	#
+	# The admin API is deliberately left ON. It binds 127.0.0.1 inside the
+	# container's network namespace, so nothing else can reach it, and it is
+	# what the container healthcheck probes. Turning it off removes the only
+	# liveness signal Caddy exposes.
+	log {
+		level ERROR
+	}
+}
+
+https://netsentinel.local:8443, https://127.0.0.1:8443, https://192.168.174.128:8443, https://172.18.0.6:8443 {
+	tls internal
+
+	# Security headers are set by the application
+	# (admin/services/bootstrap.py: add_security_headers) and are deliberately
+	# NOT duplicated here. Two places defining a CSP means the browser sees
+	# two policies and enforces the intersection, so a later change to one
+	# would silently break the other.
+	#
+	# HSTS is deliberately absent: the application emits it only when
+	# ADMIN_COOKIE_SECURE=true, and asserting it on a host whose certificate
+	# the browser does not yet trust would pin the browser to an HTTPS origin
+	# it cannot load a certificate for -- an unrecoverable LAN lockout.
+	header {
+		-Server
+	}
+
+	# Caddy sets X-Forwarded-Proto, X-Forwarded-Host and X-Forwarded-For on
+	# the upstream request by default, so they are not repeated with
+	# header_up -- doing so is exactly what produced the "Unnecessary
+	# header_up" warnings, and Caddy is right that it is redundant.
+	#
+	# The application ignores all three: client_ip() reads X-Forwarded-For only
+	# when ADMIN_TRUST_FORWARDED_FOR=true, which it is not, so the login rate
+	# limiter keeps keying on the real peer address and cannot be steered by a
+	# spoofed header. Enabling it would also require setting
+	# FORWARDED_ALLOW_IPS in docker-compose.yml; see the note there.
+	reverse_proxy admin:8080
+}

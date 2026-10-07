@@ -111,6 +111,18 @@ export interface Me {
   role: Role
 }
 
+/** A login challenge from `GET /api/captcha`.
+ *
+ * Deliberately carries no answer field: the server never sends one. The
+ * token contains only a hash of it, so this object reveals nothing a
+ * script could solve without doing the arithmetic.
+ */
+export interface CaptchaChallenge {
+  question: string
+  token: string
+  expires_in: number
+}
+
 export interface LoginResponse {
   username: string
   role: Role
@@ -285,10 +297,35 @@ function toQuery(filters: object): string {
 }
 
 export const api = {
-  login: (username: string, password: string) =>
+  /**
+   * Fetch a login challenge.
+   *
+   * Called whether or not the server enforces one: a 429 here is a real
+   * rate limit and is allowed to propagate, so the page can say so rather
+   * than submitting a login that is certain to be refused.
+   */
+  captcha: (signal?: AbortSignal) =>
+    request<CaptchaChallenge>('/captcha', {
+      ...(signal ? { signal } : {}),
+      // Same reasoning as `me`: the login page handles this itself.
+      suppressUnauthorized: true,
+    }),
+
+  login: (
+    username: string,
+    password: string,
+    captcha?: { token: string; answer: string },
+  ) =>
     request<LoginResponse>('/login', {
       method: 'POST',
-      body: { username, password },
+      body: {
+        username,
+        password,
+        // Omitted rather than sent as null when there is no challenge:
+        // the backend distinguishes 'absent' from 'wrong', and sending
+        // empty strings would turn the first case into the second.
+        ...(captcha ? { captcha_token: captcha.token, captcha_answer: captcha.answer } : {}),
+      },
       // A 401 here means the credentials were rejected, not that a session
       // expired. Without this the handler cleared the query cache and
       // re-navigated to the login route -- the page already being viewed.

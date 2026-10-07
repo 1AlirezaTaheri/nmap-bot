@@ -119,9 +119,22 @@ class Settings:
     # Force the Secure cookie flag. Leave off for plain-HTTP LAN access;
     # a Secure cookie over http:// would never be sent back.
     admin_cookie_secure: bool
+
     # Only trust X-Forwarded-For when actually behind a proxy, otherwise a
     # client can spoof its IP to dodge the login rate limit.
     admin_trust_forwarded_for: bool
+
+    # Self-hosted CAPTCHA on the login form. Off by default, so an existing
+    # deployment behaves exactly as before until the operator turns it on.
+    #
+    # Not exposed through the settings API on purpose: it is a process-start
+    # concern, and flipping it at runtime would leave the login page and the
+    # login endpoint disagreeing about what a valid request looks like.
+    #
+    # Declared after the non-defaulted fields because it has a default, and a
+    # defaulted field cannot precede a non-defaulted one. The default keeps
+    # the direct Settings(...) constructions in the tests working.
+    captcha_enabled: bool = False
 
     # --- Telegram Mini App ---
     # Public HTTPS origin the Mini App is served from. Telegram refuses to
@@ -182,6 +195,7 @@ class Settings:
             admin_port=_int("ADMIN_PORT", "8080"),
             admin_host=_optional("ADMIN_HOST", "0.0.0.0"),
             admin_cookie_secure=_bool("ADMIN_COOKIE_SECURE", "false"),
+            captcha_enabled=_bool("CAPTCHA_ENABLED", "false"),
             admin_trust_forwarded_for=_bool(
                 "ADMIN_TRUST_FORWARDED_FOR", "false"
             ),

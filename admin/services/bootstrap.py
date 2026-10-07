@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from admin.services import auth as auth_service
+from admin.services import captcha as captcha_service
 from admin.services import users as user_service
 from admin.services.settings_store import SettingsStore, seed as seed_settings
 from config.settings import Settings
@@ -44,6 +45,13 @@ class AdminContext:
     database: Database
     settings_store: SettingsStore
     login_limiter: auth_service.LoginRateLimiter
+    # Single-use bookkeeping for CAPTCHA challenges. In-process, like
+    # the rate limiter, so a restart clears it: correct, because a
+    # restart already invalidates every session and an outstanding
+    # challenge expires in five minutes anyway.
+    captcha_store: captcha_service.CaptchaStore = field(
+        default_factory=captcha_service.CaptchaStore
+    )
     # Shared so the panel enforces the same CIDR scope as the bot.
     authorizer: Any = None
     # The Mini App can queue scans, so this process needs a worker and the

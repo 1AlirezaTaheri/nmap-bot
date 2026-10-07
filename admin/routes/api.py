@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from admin.services import audit as audit_service
 
 from admin.services import auth as auth_service
+from admin.services import captcha as captcha_service
 from admin.services import stats as stats_service
 from admin.services import users as user_service
 from admin.services.auth import AuthError
@@ -42,6 +43,12 @@ def ctx(request: Request) -> AdminContext:
 class LoginBody(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=256)
+
+    # Optional on purpose. Whether they are *required* is decided by
+    # CAPTCHA_ENABLED at request time, so turning the setting off must
+    # not start rejecting a payload shape that was valid before.
+    captcha_token: str | None = Field(default=None, max_length=4096)
+    captcha_answer: str | None = Field(default=None, max_length=64)
 
 
 class PasswordBody(BaseModel):
@@ -81,6 +88,42 @@ class TargetBody(BaseModel):
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# CAPTCHA
+# ---------------------------------------------------------------------------
+
+
+@router.get("/captcha")
+async def get_captcha(request: Request):
+    """Issue a login challenge.
+
+    Unauthenticated by necessity -- it is the login page that needs it --
+    so it shares the login rate limiter. Otherwise this endpoint would be
+    a free, unthrottled way for a script to pull challenges in bulk.
+
+    It answers whether or not CAPTCHA_ENABLED is set. A client may have a
+    cached page; one extra cheap request beats a skew between what the
+    page expects and what login will accept. The token is only *accepted*
+    when the setting is on.
+    """
+    context = ctx(request)
+    ip = client_ip(request)
+
+    allowed, _remaining = context.login_limiter.check(ip)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts. Try again shortly.",
+        )
+
+    challenge = captcha_service.issue_challenge(ip, context.captcha_store)
+    return {
+        "question": challenge.question,
+        "token": challenge.token,
+        "expires_in": captcha_service.TOKEN_TTL_SECONDS,
+    }
 
 
 @router.post("/login")
@@ -131,6 +174,33 @@ async def login(request: Request, response: Response, body: LoginBody):
                 success=False,
             ),
         )
+
+    if context.settings.captcha_enabled:
+        # After the rate limiter, before the password. The order is the
+        # point:
+        #
+        #  * the limiter runs first, so a flood of wrong answers still
+        #    costs the attacker a slot rather than being free;
+        #  * the challenge runs before verify_password, so a wrong answer
+        #    never reaches bcrypt at cost 12.
+        #
+        # With the setting off nothing is read and the path is identical
+        # to before: same statuses, same audit rows.
+        captcha_ok, captcha_reason = captcha_service.verify_challenge(
+            body.captcha_token or "",
+            body.captcha_answer or "",
+            ip,
+            context.captcha_store,
+        )
+        if not captcha_ok:
+            # Audited like a bad password: a run of failed challenges is
+            # exactly what is worth seeing afterwards. Neither the
+            # supplied answer nor the expected one is recorded.
+            _reject(f"captcha_{captcha_reason}", None, body.username)
+            raise HTTPException(
+                status_code=400,
+                detail="Incorrect or expired CAPTCHA. Please try again.",
+            )
 
     with context.database.session() as session:
         row = user_service.get_admin_by_username(session, body.username)
