@@ -392,3 +392,186 @@ def worker_status(worker: object | None) -> dict:
         "pending": count("queued") + count("running"),
         "max_concurrency": getattr(worker, "max_concurrency", None),
     }
+
+
+def target_detail(session: Session, target_id: int) -> dict | None:
+    """One target's identity and counts, or None if it does not exist."""
+    from database.repository import TargetRepository
+
+    row = TargetRepository(session).get(target_id)
+    if row is None:
+        return None
+
+    scan_count = TargetRepository(session).scan_count(target_id)
+    return {
+        "id": row.id,
+        "name": row.name,
+        "value": row.value,
+        # The column is `group_name`; the API field is `group` because that is
+        # what /api/targets already returns and the two must agree.
+        "group": row.group_name,
+        "enabled": bool(row.enabled),
+        "created_at": row.created_at,
+        "scan_count": scan_count,
+        "schedule": _target_schedule(session, target_id),
+    }
+
+
+def _target_schedule(session: Session, target_id: int) -> dict | None:
+    """The target's schedule row, or None when it has none.
+
+    Unlike the global scheduler -- which has no stored next-run time and so
+    reports it as unknown -- a schedule row does persist `next_run_at`, so the
+    detail page can show a real value here.
+    """
+    from database.repository import ScheduleRepository
+
+    row = ScheduleRepository(session).for_target(target_id)
+    if row is None:
+        return None
+    return {
+        "id": row.id,
+        "profile": row.profile,
+        "enabled": bool(row.enabled),
+        "interval_hours": row.interval_hours,
+        "last_run_at": row.last_run_at,
+        "next_run_at": row.next_run_at,
+    }
+
+
+def target_timeline(session: Session, target_id: int,
+                    days: int = 30) -> list[dict]:
+    """Daily scan and change counts for one target, oldest first.
+
+    Bucketed in Python rather than SQL so SQLite and PostgreSQL produce the
+    same shape, matching `daily_series`. Buckets with no activity are emitted
+    as zeros on purpose: a gap in the data and a gap on the chart are different
+    things, and a line that skips a day implies the former.
+    """
+    cutoff = _utcnow() - timedelta(days=days - 1)
+    cutoff = cutoff.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    scan_rows = session.execute(
+        select(Scan.started_at, Scan.status, Scan.id).where(
+            Scan.target_id == target_id, Scan.started_at >= cutoff
+        )
+    ).all()
+
+    change_rows = session.execute(
+        select(ChangeEvent.created_at)
+        .join(Scan, ChangeEvent.scan_id == Scan.id)
+        .where(Scan.target_id == target_id, ChangeEvent.created_at >= cutoff)
+    ).all()
+
+    buckets: dict[str, dict] = {}
+    day = cutoff
+    today = _utcnow().date()
+    for _ in range(days):
+        key = day.date().isoformat()
+        buckets[key] = {
+            "date": key, "scans": 0, "failed": 0, "changes": 0,
+        }
+        day += timedelta(days=1)
+
+    for started_at, status, _scan_id in scan_rows:
+        if started_at is None:
+            continue
+        key = started_at.date().isoformat()
+        if key in buckets:
+            buckets[key]["scans"] += 1
+            if status == "failed":
+                buckets[key]["failed"] += 1
+
+    for (created_at,) in change_rows:
+        if created_at is None:
+            continue
+        key = created_at.date().isoformat()
+        if key in buckets:
+            buckets[key]["changes"] += 1
+
+    return [v for k, v in sorted(buckets.items()) if k <= today.isoformat()]
+
+
+def scan_hosts(session: Session, scan_id: int) -> dict | None:
+    """Hosts and services for one scan, plus a port distribution.
+
+    Returns None when the scan does not exist, so the route can 404 rather
+    than return an empty result that reads as "this scan found nothing".
+
+    The port distribution is counted from the same rows the table renders, so
+    the chart and the table cannot drift apart.
+    """
+    from sqlalchemy import select as sa_select
+
+    from database.models import Host as HostModel
+    from database.models import Scan as ScanModel
+    from database.models import Service as ServiceModel
+
+    scan = session.get(ScanModel, scan_id)
+    if scan is None:
+        return None
+
+    hosts = session.scalars(
+        sa_select(HostModel)
+        .where(HostModel.scan_id == scan_id)
+        .order_by(HostModel.address)
+    ).all()
+
+    host_ids = [h.id for h in hosts]
+    services: dict[int, list[ServiceModel]] = {}
+    if host_ids:
+        for svc in session.scalars(
+            sa_select(ServiceModel).where(ServiceModel.host_id.in_(host_ids))
+        ):
+            services.setdefault(svc.host_id, []).append(svc)
+
+    host_rows = [
+        {
+            "id": h.id,
+            "address": h.address,
+            "hostname": h.hostname,
+            "state": h.state,
+            "services": sorted(
+                (
+                    {
+                        "id": s.id,
+                        "port": s.port,
+                        "protocol": s.protocol,
+                        "state": s.state,
+                        "service_name": s.service_name,
+                        "product": s.product,
+                        "version": s.version,
+                    }
+                    for s in services.get(h.id, [])
+                ),
+                key=lambda s: (s["port"], s["protocol"]),
+            ),
+        }
+        for h in hosts
+    ]
+
+    # Port distribution across every service on the scan, open or not.
+    counts: dict[int, int] = {}
+    for rows in services.values():
+        for s in rows:
+            counts[s.port] = counts.get(s.port, 0) + 1
+
+    return {
+        "scan": {
+            "id": scan.id,
+            "profile": scan.profile,
+            "status": scan.status,
+            "source": scan.source,
+            "started_at": scan.started_at,
+            "finished_at": scan.finished_at,
+            "duration_ms": scan.duration_ms,
+            "host_count": scan.host_count,
+            "service_count": scan.service_count,
+            "error": scan.error,
+        },
+        "hosts": host_rows,
+        "port_distribution": [
+            {"port": port, "count": count}
+            for port, count in sorted(counts.items(), key=lambda kv: -kv[1])[:20]
+        ],
+    }

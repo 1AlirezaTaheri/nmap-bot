@@ -268,6 +268,81 @@ export interface ScheduleStatus {
   next_run_known: boolean
 }
 
+/* --- Target detail (Phase 3) ------------------------------------------- */
+
+export interface TargetScheduleRow {
+  id: number
+  profile: string
+  enabled: boolean
+  interval_hours: number
+  last_run_at: string | null
+  next_run_at: string | null
+}
+
+export interface TargetDetail {
+  id: number
+  name: string
+  value: string
+  group: string | null
+  enabled: boolean
+  created_at: string | null
+  scan_count: number
+  schedule: TargetScheduleRow | null
+}
+
+export interface TargetTimelinePoint {
+  date: string
+  scans: number
+  failed: number
+  changes: number
+}
+
+export interface TargetTimeline {
+  target_id: number
+  days: number
+  series: TargetTimelinePoint[]
+}
+
+export interface ScanService {
+  id: number
+  port: number
+  protocol: string
+  state: string
+  service_name: string | null
+  product: string | null
+  version: string | null
+}
+
+export interface ScanHost {
+  id: number
+  address: string
+  hostname: string | null
+  state: string
+  services: ScanService[]
+}
+
+export interface PortCount {
+  port: number
+  count: number
+}
+
+export interface ScanHosts {
+  scan: {
+    id: number
+    profile: string
+    status: string
+    source: string
+    started_at: string | null
+    finished_at: string | null
+    duration_ms: number | null
+    host_count: number
+    service_count: number
+    error: string | null
+  }
+  hosts: ScanHost[]
+  port_distribution: PortCount[]
+}
+
 export interface Stats {
   targets: number
   scans: number
@@ -452,6 +527,24 @@ export const api = {
       body: { values },
     }),
 
+  /** One target's identity, counts and schedule. */
+  target: (id: number, signal?: AbortSignal) =>
+    request<TargetDetail>(`/targets/${id}`, signal ? { signal } : {}),
+
+  /** Daily scan and change counts for one target. */
+  targetTimeline: (id: number, days = 30, signal?: AbortSignal) =>
+    request<TargetTimeline>(
+      `/targets/${id}/timeline?days=${days}`,
+      signal ? { signal } : {},
+    ),
+
+  /** Hosts, services and port distribution for one scan. */
+  scanHosts: (targetId: number, scanId: number, signal?: AbortSignal) =>
+    request<ScanHosts>(
+      `/targets/${targetId}/scans/${scanId}/hosts`,
+      signal ? { signal } : {},
+    ),
+
   listTargets: (signal?: AbortSignal) =>
     request<{ targets: Target[] }>('/targets', signal ? { signal } : {}),
 
@@ -464,11 +557,21 @@ export const api = {
       { method: 'DELETE' },
     ),
 
-  targetScans: (id: number, signal?: AbortSignal) =>
-    request<{ scans: ScanRow[] }>(`/targets/${id}/scans`, signal ? { signal } : {}),
+  // `limit` comes AFTER `signal`, which reads oddly. Putting it before would
+  // silently break every existing caller that passes an AbortSignal in second
+  // position -- which is exactly what happened the first time. The order is
+  // load-bearing; leave it alone.
+  targetScans: (id: number, signal?: AbortSignal, limit?: number) =>
+    request<{ scans: ScanRow[] }>(
+      `/targets/${id}/scans${limit === undefined ? '' : `?limit=${limit}`}`,
+      signal ? { signal } : {},
+    ),
 
-  targetChanges: (id: number, signal?: AbortSignal) =>
-    request<{ changes: ChangeRow[] }>(`/targets/${id}/changes`, signal ? { signal } : {}),
+  targetChanges: (id: number, signal?: AbortSignal, limit?: number) =>
+    request<{ changes: ChangeRow[] }>(
+      `/targets/${id}/changes${limit === undefined ? '' : `?limit=${limit}`}`,
+      signal ? { signal } : {},
+    ),
 
   /** Targets with the most change events in a window, worst first. */
   topTargets: (days = 7, signal?: AbortSignal) =>

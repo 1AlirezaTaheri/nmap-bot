@@ -1,10 +1,12 @@
 import * as React from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { formatDistanceToNow } from 'date-fns'
 import {
   AlertTriangle,
+  ExternalLink,
   LayoutGrid,
   PlusCircle,
   Rows3,
@@ -140,6 +142,25 @@ export function TargetsPage(): JSX.Element {
       key: 'value',
       header: 'Value',
       cell: (t) => <span className="font-mono text-xs text-muted">{t.value}</span>,
+    },
+    {
+      // A real Link, not a click handler: the href is then visible on hover,
+      // middle-click and "open in new tab" work, and it is reachable by
+      // keyboard as a link rather than only as a clickable cell.
+      key: 'detail',
+      header: 'Details',
+      className: 'text-right',
+      cell: (t) => (
+        <Link
+          to={`/targets/${t.id}`}
+          onClick={(event) => event.stopPropagation()}
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted transition-colors hover:bg-elevated hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          aria-label={`Open full detail for ${t.name}`}
+        >
+          Open
+          <ExternalLink className="h-3 w-3" aria-hidden />
+        </Link>
+      ),
     },
     {
       key: 'scans',
@@ -440,9 +461,17 @@ function TargetDrawer({
             <h2 className="truncate text-base font-semibold text-fg">{target.name}</h2>
             <p className="truncate font-mono text-xs text-muted">{target.value}</p>
           </div>
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
-            <X className="h-4 w-4" />
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            <Link to={`/targets/${target.id}`} onClick={onClose}>
+              <Button variant="outline" size="sm">
+                Full detail
+                <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+              </Button>
+            </Link>
+            <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
         </header>
 
         <div className="flex-1 space-y-5 overflow-y-auto p-4">

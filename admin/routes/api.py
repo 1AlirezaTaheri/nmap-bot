@@ -812,6 +812,71 @@ async def purge_target(request: Request, target_id: int, confirm: bool = False,
     return {"purged": name, "counts": counts}
 
 
+@router.get("/targets/{target_id}")
+async def get_target(request: Request, target_id: int,
+                     principal=Depends(current_principal)):
+    """One target's identity, counts and schedule.
+
+    Exists so a deep link works without loading the whole list first.
+    """
+    del principal  # authentication only
+    context = ctx(request)
+    with context.database.session() as session:
+        detail = stats_service.target_detail(session, target_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Target not found.")
+    return detail
+
+
+@router.get("/targets/{target_id}/timeline")
+async def target_timeline(request: Request, target_id: int, days: int = 30,
+                          principal=Depends(current_principal)):
+    """Daily scan and change counts for one target.
+
+    `days` is clamped to 365: it is multiplied into one bucket per day and
+    drives two range scans, so an unbounded value is a slow query rather than
+    an error.
+    """
+    del principal  # authentication only
+    days = max(1, min(days, 365))
+    context = ctx(request)
+    with context.database.session() as session:
+        if stats_service.target_detail(session, target_id) is None:
+            raise HTTPException(status_code=404, detail="Target not found.")
+        return {
+            "target_id": target_id,
+            "days": days,
+            "series": stats_service.target_timeline(
+                session, target_id, days=days
+            ),
+        }
+
+
+@router.get("/targets/{target_id}/scans/{scan_id}/hosts")
+async def scan_hosts(request: Request, target_id: int, scan_id: int,
+                     principal=Depends(current_principal)):
+    """Hosts and services for one scan, plus a port distribution.
+
+    Checks that the scan belongs to the target: without it, any valid scan id
+    could be read through any target id, which is an IDOR across resources the
+    caller may not both be allowed to see.
+    """
+    del principal  # authentication only
+    context = ctx(request)
+    with context.database.session() as session:
+        from database.repository import ScanRepository
+
+        scan = ScanRepository(session).get(scan_id)
+        if scan is None or scan.target_id != target_id:
+            raise HTTPException(
+                status_code=404, detail="Scan not found for this target."
+            )
+        payload = stats_service.scan_hosts(session, scan_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    return payload
+
+
 @router.get("/targets/{target_id}/scans")
 async def target_scans(request: Request, target_id: int, limit: int = 25,
                        principal=Depends(current_principal)):

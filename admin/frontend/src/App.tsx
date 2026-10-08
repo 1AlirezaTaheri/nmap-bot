@@ -11,6 +11,7 @@ import { LoginPage } from '@/pages/login'
 import { DashboardPage } from '@/pages/dashboard'
 import { TelegramUsersPage } from '@/pages/telegram-users'
 import { TargetsPage } from '@/pages/targets'
+import { TargetDetailPage } from '@/pages/target-detail'
 import { AuditPage } from '@/pages/audit'
 import { SettingsPage } from '@/pages/settings'
 import { StyleGuidePage } from '@/pages/style-guide'
@@ -83,6 +84,10 @@ function Shell(): JSX.Element {
           {/* Old bookmark still works. */}
           <Route path="/users" element={<Navigate to="/telegram-users" replace />} />
           <Route path="/targets" element={<TargetsPage />} />
+          {/* Declared after /targets so the list stays the match for the
+              bare path; react-router ranks the more specific segment
+              first anyway, but the order reads unambiguously. */}
+          <Route path="/targets/:id" element={<TargetDetailPage />} />
           <Route path="/audit" element={<AuditPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/style-guide" element={<StyleGuidePage />} />
