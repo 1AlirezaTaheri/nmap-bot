@@ -62,7 +62,12 @@ async def _on_scan_complete(app, job: ScanJob, outcome, error: str | None) -> No
         )
         db = app.bot_data.get("database")
 
-        if job.source == "scheduled":
+        # "panel" is routed with "scheduled" because it is the same situation:
+        # a scan with no originating conversation, so there is no chat to reply
+        # to. Without this the code below would send_message(chat_id=0), which
+        # Telegram rejects, and because that send happens *before* the
+        # scan.completed audit row the row would never be written either.
+        if job.source in ("scheduled", "panel"):
             scheduler = app.bot_data.get("scheduler")
             if outcome is None:
                 return
@@ -79,7 +84,9 @@ async def _on_scan_complete(app, job: ScanJob, outcome, error: str | None) -> No
                             target_id=outcome.target_name,
                             details={
                                 "scan_id": outcome.scan_id,
-                                "source": "scheduled",
+                                # The job's real source, not the literal
+                                # "scheduled" this branch was matched on.
+                                "source": job.source,
                                 "changes": len(outcome.changes),
                                 "delivered": delivered,
                                 "lang": lang,

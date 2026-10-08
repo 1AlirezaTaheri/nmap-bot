@@ -293,11 +293,22 @@ class TestSchedulerLifecycle:
                 source="scheduled",
             )
             await worker.submit(job)
-            await asyncio.sleep(0.4)
+            # Wait for the condition, not for the clock. The fixed 0.4s this
+            # replaced was sometimes not enough on a loaded machine, which made
+            # the test fail intermittently for reasons that had nothing to do
+            # with what it asserts. Bounded so a genuine regression fails
+            # instead of hanging.
+            for _ in range(100):
+                if delivered:
+                    break
+                await asyncio.sleep(0.02)
         finally:
             await worker.stop()
             await scheduler.stop()
 
+        assert delivered, (
+            "the worker never ran the scheduled job within 2s"
+        )
         assert len(delivered) == 1
         submitted, outcome, error = delivered[0]
         assert submitted.source == "scheduled"

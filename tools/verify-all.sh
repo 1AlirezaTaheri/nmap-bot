@@ -53,3 +53,15 @@ bash "$DIR/verify-target-detail-api.sh" 2>&1 | tail -45
 echo
 echo "=== verify the target detail UI in the bundle ==="
 bash "$DIR/verify-target-detail.sh" 2>&1 | tail -30
+
+echo
+echo "=== verify panel scanning ==="
+bash "$DIR/verify-panel-scan.sh" 2>&1 | tail -40
+
+echo
+echo "=== verify mobile navigation ==="
+bash "$DIR/verify-mobile-nav.sh" 2>&1 | tail -25
+
+echo
+fail=0
+echo "done"

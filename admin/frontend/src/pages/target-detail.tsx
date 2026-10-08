@@ -53,6 +53,7 @@ import {
   TableSkeleton,
 } from '@/components/feedback'
 import { DataTable, Pagination, type Column, type SortSpec } from '@/components/data-table'
+import { ScanButton } from '@/components/scan-button'
 import { Tabs, TabsContent } from '@/components/ui'
 
 const CHART_TOOLTIP = {
@@ -403,6 +404,24 @@ export function TargetDetailPage(): JSX.Element {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Primary action. Placed with the header rather than near the
+              scans table because it applies to the target, not to one row. */}
+          {target ? (
+            <ScanButton
+              targetId={target.id}
+              targetName={target.name}
+              variant="default"
+              onQueued={() => {
+                // A queued scan has not produced a row yet, so the scans list
+                // will not change on its own. Refetch once the job lands.
+                window.setTimeout(() => {
+                  void queryClient.invalidateQueries({
+                    queryKey: ['target', targetId],
+                  })
+                }, 4_000)
+              }}
+            />
+          ) : null}
           <Button variant="outline" size="sm" onClick={() => void queryClient.invalidateQueries()}>
             Refresh
           </Button>

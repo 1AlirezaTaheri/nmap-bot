@@ -11,6 +11,7 @@ import {
   Moon,
   Network,
   RefreshCw,
+  Menu,
   Paintbrush,
   ScrollText,
   Search,
@@ -22,6 +23,7 @@ import { useUIStore } from '@/store/ui'
 import { avatarColor, cn, initials } from '@/lib/utils'
 import { Badge, Button, Tooltip, TooltipContent, TooltipTrigger } from './ui'
 import { CommandPalette, useCommandPalette } from './command-palette'
+import { MobileNav } from './mobile-nav'
 
 interface NavItem {
   to: string
@@ -262,12 +264,14 @@ export function Topbar({
   onLogout,
   onRefresh,
   onOpenPalette,
+  onOpenNav,
 }: {
   username: string
   role: string
   onLogout: () => void
   onRefresh: () => void
   onOpenPalette: () => void
+  onOpenNav: () => void
 }): JSX.Element {
   const location = useLocation()
   const navigate = useNavigate()
@@ -275,7 +279,25 @@ export function Topbar({
 
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-border bg-bg/85 px-4 backdrop-blur">
-      <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-sm">
+      {/* md:hidden because the sidebar covers this from md up. */}
+      <button
+        type="button"
+        onClick={onOpenNav}
+        aria-label="Open navigation"
+        aria-haspopup="dialog"
+        className={cn(
+          '-ml-1 rounded-md p-2 text-muted transition-colors hover:bg-elevated hover:text-fg',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+          'md:hidden',
+        )}
+      >
+        <Menu className="h-5 w-5" aria-hidden />
+      </button>
+
+      <nav
+        aria-label="Breadcrumb"
+        className="flex min-w-0 items-center gap-1.5 text-sm"
+      >
         {crumbs.map((crumb, index) => {
           const last = index === crumbs.length - 1
           return (
@@ -313,6 +335,8 @@ export function Topbar({
             'mr-1 hidden items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted',
             'transition-colors hover:bg-elevated hover:text-fg',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+            // Hidden on mobile: the keyboard hint is meaningless on a touch
+            // device and the row costs more width than it earns.
             'sm:flex',
           )}
         >
@@ -432,7 +456,9 @@ export function AppShell({
   children: React.ReactNode
 }): JSX.Element {
   const [paletteOpen, setPaletteOpen] = React.useState(false)
+  const [navOpen, setNavOpen] = React.useState(false)
   const openPalette = React.useCallback(() => setPaletteOpen(true), [])
+  const openNav = React.useCallback(() => setNavOpen(true), [])
   useCommandPalette(openPalette)
 
   return (
@@ -445,6 +471,7 @@ export function AppShell({
           onLogout={onLogout}
           onRefresh={onRefresh}
           onOpenPalette={openPalette}
+          onOpenNav={openNav}
         />
         <main className="flex-1 p-4 md:p-6">
           <div className="mx-auto max-w-7xl space-y-5">{children}</div>
@@ -456,6 +483,15 @@ export function AppShell({
         onOpenChange={setPaletteOpen}
         onLogout={onLogout}
         onRefresh={onRefresh}
+      />
+
+      <MobileNav
+        open={navOpen}
+        onClose={() => setNavOpen(false)}
+        username={username}
+        role={role}
+        onLogout={onLogout}
+        items={NAV}
       />
     </div>
   )

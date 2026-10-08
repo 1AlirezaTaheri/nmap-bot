@@ -268,6 +268,23 @@ export interface ScheduleStatus {
   next_run_known: boolean
 }
 
+/* --- Panel scans ------------------------------------------------------- */
+
+export interface PanelScanRequest {
+  job_id: number
+  target: string
+  profile: string
+  state: string
+}
+
+export interface ActiveTargetScan {
+  id: number
+  profile: string
+  status: string
+  source: string
+  started_at: string | null
+}
+
 /* --- Target detail (Phase 3) ------------------------------------------- */
 
 export interface TargetScheduleRow {
@@ -526,6 +543,27 @@ export const api = {
       method: 'PATCH',
       body: { values },
     }),
+
+  /**
+   * Queue a scan of one target.
+   *
+   * The body is optional: a bare POST starts a scan with the application's
+   * default profile, which is what the panel's single Scan button does.
+   */
+  startScan: (targetId: number, profile?: string) =>
+    request<PanelScanRequest>(
+      `/targets/${targetId}/scan`,
+      profile === undefined
+        ? { method: 'POST' }
+        : { method: 'POST', body: { profile } },
+    ),
+
+  /** The target's most recent unfinished scan, if any. */
+  activeTargetScan: (targetId: number, signal?: AbortSignal) =>
+    request<{ scan: ActiveTargetScan | null }>(
+      `/targets/${targetId}/scan/active`,
+      signal ? { signal } : {},
+    ),
 
   /** One target's identity, counts and schedule. */
   target: (id: number, signal?: AbortSignal) =>

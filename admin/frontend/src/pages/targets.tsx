@@ -16,6 +16,7 @@ import {
 import { toast } from 'sonner'
 import { z } from 'zod'
 import { api, type Target } from '@/lib/api'
+import { ScanButton, ScanStatusDot } from '@/components/scan-button'
 import { cn, formatNumber } from '@/lib/utils'
 import {
   AlertDialog,
@@ -168,7 +169,15 @@ export function TargetsPage(): JSX.Element {
       sortable: true,
       sortValue: (t) => t.scan_count,
       className: 'text-right tabular-nums',
-      cell: (t) => formatNumber(t.scan_count),
+      // The dot is the live indicator; the count stays the sortable value.
+      // Reading one and writing the other would make a running scan invisible
+      // to the sort, which is what it should be.
+      cell: (t) => (
+        <span className="inline-flex items-center justify-end gap-1.5">
+          <ScanStatusDot targetId={t.id} />
+          <span>{formatNumber(t.scan_count)}</span>
+        </span>
+      ),
     },
     {
       key: 'health',
@@ -462,6 +471,7 @@ function TargetDrawer({
             <p className="truncate font-mono text-xs text-muted">{target.value}</p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            <ScanButton targetId={target.id} targetName={target.name} />
             <Link to={`/targets/${target.id}`} onClick={onClose}>
               <Button variant="outline" size="sm">
                 Full detail

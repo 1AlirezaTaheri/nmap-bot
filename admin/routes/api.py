@@ -79,6 +79,17 @@ class SettingsPatch(BaseModel):
     values: dict[str, str]
 
 
+class PanelScanBody(BaseModel):
+    """Body for POST /targets/{id}/scan.
+
+    `profile` is optional and falls back to the application's default, so the
+    simplest possible request -- no body at all -- starts a scan with the
+    profile the operator already configured.
+    """
+
+    profile: str | None = Field(default=None, max_length=32)
+
+
 class TargetBody(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     value: str = Field(min_length=1, max_length=255)
@@ -810,6 +821,241 @@ async def purge_target(request: Request, target_id: int, confirm: bool = False,
             ),
         )
     return {"purged": name, "counts": counts}
+
+
+@router.post("/targets/{target_id}/scan", status_code=202)
+async def start_target_scan(request: Request, target_id: int,
+                            body: PanelScanBody | None = None,
+                            principal=Depends(require_role("admin"))):
+    """Queue a scan of one target through the shared worker.
+
+    Gated on `admin`, matching every other write in this file. Running a scan
+    reaches out to a network range, so it is not a viewer action.
+
+    The gate order mirrors the Mini App's /scan exactly: worker, role, profile,
+    target, target scope, rule engine, rate limiter, submit. Reordering these
+    is how a second front door becomes a way around policy -- the rate limiter
+    in particular must come last, after policy, so a denial is reported as a
+    refusal rather than as a wait.
+
+    Two things about the actor are worth knowing:
+
+    * `requested_by` is stored as NULL. That column is the *Telegram* id, and
+      the Telegram-user list joins it against telegram_user_id to show scan
+      counts, so writing an admin id there would collide with a Telegram id and
+      inflate an unrelated user's tally. Provenance lives in the audit log
+      under ACTOR_ADMIN instead.
+    * Because actor_id is None, user-scoped rules (user_quota, or any rule with
+      scope "user") do not apply. That is correct rather than a gap -- those are
+      per-Telegram-user quotas and a panel operator is not a Telegram user --
+      but it is a real difference. Target-scoped rules and the shared rate
+      limiter do apply, and the limiter is keyed on the target name, so the
+      panel and Telegram draw on the same per-target budget.
+    """
+    context = ctx(request)
+    worker = getattr(context, "scan_worker", None)
+    if worker is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "This process has no scan worker. Start the bot service, or "
+                "run the scan from Telegram with /scan."
+            ),
+        )
+
+    # Local imports: both are used only by this handler, which keeps the
+    # module-level import list unchanged. purge_target does the same thing.
+    from core.profiles import get_profile
+    from database.repository import TargetRepository
+
+    profile_name = body.profile if body is not None else None
+    try:
+        profile = get_profile(profile_name)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    with context.database.session() as session:
+        row = TargetRepository(session).get(target_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Target not found.")
+        if not row.enabled:
+            raise HTTPException(
+                status_code=400, detail="This target is disabled."
+            )
+        target_name = row.name
+        target_value = row.value
+
+    # Target scope, the same check the bot applies.
+    try:
+        context.authorizer.assert_target_permitted(target_value)
+    except TargetNotAllowedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    now = datetime.now(timezone.utc)
+    settings = context.settings
+    store = context.settings_store
+
+    scan_timeout = None
+    effective_rate = settings.rate_limit_seconds
+
+    if store is not None and store.get("rules_enabled") is not False:
+        # RuleContext and RuleEngine are needed here as well as rate_limit_key;
+        # importing only the last one is what left the other two undefined at
+        # the call site, which surfaced as a 500 on every scan request rather
+        # than at import time.
+        from core.rules import RuleContext, RuleEngine, rate_limit_key
+        from database.repository import RuleRepository, ScanRepository
+
+        with context.database.session() as session:
+            rules = RuleRepository(session).load_engine_rules()
+            last = ScanRepository(session).latest_started_for_target_name(
+                target_name
+            )
+
+        rule_ctx = RuleContext(
+            target=target_value,
+            target_key=target_name,
+            # None: see the docstring. The engine treats that as "no actor",
+            # which is what makes user-scoped rules skip rather than match the
+            # wrong id.
+            actor_id=None,
+            ports=profile.port_list(),
+            now=now,
+            # Empty, because there is no actor to have used a quota.
+            quota_usage={},
+            default_rate_limit_seconds=settings.rate_limit_seconds,
+            default_scan_timeout_seconds=settings.scan_timeout_seconds,
+        )
+        if last is not None:
+            rule_ctx = type(rule_ctx)(
+                **{
+                    **{f: getattr(rule_ctx, f) for f in rule_ctx.__dataclass_fields__},
+                    "last_scans": {
+                        rate_limit_key(rule_ctx, "target", target_name): last
+                    },
+                }
+            )
+
+        decision = RuleEngine(rules).evaluate(rule_ctx)
+        if not decision.allowed:
+            with context.database.session() as session:
+                audit_service.record(
+                    session,
+                    audit_service.AuditEntry(
+                        action="scan.requested",
+                        actor_id=principal.id,
+                        actor_username=principal.username,
+                        actor_type=audit_service.ACTOR_ADMIN,
+                        target_type="target",
+                        target_id=target_name,
+                        details={
+                            "result": "blocked_by_rule",
+                            "reason": decision.reason,
+                            "rule_name": decision.rule_name,
+                        },
+                        ip_address=client_ip(request),
+                        success=False,
+                    ),
+                )
+            raise HTTPException(status_code=403, detail=decision.reason)
+
+        scan_timeout = decision.effective_scan_timeout
+        effective_rate = decision.effective_rate_limit_seconds
+
+    # Rate limiter last, after policy.
+    limiter = getattr(context, "rate_limiter", None)
+    if limiter is not None:
+        rate_decision = limiter.check(target_name)
+        if not rate_decision.allowed:
+            raise HTTPException(status_code=429, detail=rate_decision.reason)
+    elif effective_rate:
+        raise HTTPException(status_code=503, detail="Rate limiter unavailable.")
+
+    from workers.scan_worker import ScanJob
+
+    job = ScanJob(
+        job_id=await worker.next_job_id(),
+        # 0 means "no originating conversation". The bot routes panel jobs the
+        # same way it routes scheduled ones for exactly this reason.
+        chat_id=0,
+        target_name=target_name,
+        target_value=target_value,
+        profile=profile,
+        # Fits Scan.source (String(16)) and reads correctly in the scan list.
+        source="panel",
+        requested_by=None,
+        actor_username=principal.username,
+        lang=None,
+        scan_timeout=scan_timeout,
+    )
+    await worker.submit(job)
+
+    with context.database.session() as session:
+        audit_service.record(
+            session,
+            audit_service.AuditEntry(
+                action="scan.requested",
+                actor_id=principal.id,
+                actor_username=principal.username,
+                actor_type=audit_service.ACTOR_ADMIN,
+                target_type="target",
+                target_id=target_name,
+                details={
+                    "profile": profile.name,
+                    "job_id": job.job_id,
+                    "scan_timeout": scan_timeout,
+                },
+                ip_address=client_ip(request),
+            ),
+        )
+
+    return {
+        "job_id": job.job_id,
+        "target": target_name,
+        "profile": profile.name,
+        "state": "queued",
+    }
+
+
+@router.get("/targets/{target_id}/scan/active")
+async def target_scan_active(request: Request, target_id: int,
+                             principal=Depends(current_principal)):
+    """The target's most recent unfinished scan, if any.
+
+    The panel's progress indicator polls this. Scoped to the target rather than
+    to the caller: an operator watching the dashboard needs to see a scan
+    another operator started, and every admin can already read every scan in
+    the list, so scoping it per-user would hide rather than protect anything.
+    """
+    del principal  # authentication only
+    from sqlalchemy import select as sa_select
+
+    from database.models import Scan as ScanModel
+
+    context = ctx(request)
+    with context.database.session() as session:
+        scan = session.scalar(
+            sa_select(ScanModel)
+            .where(
+                ScanModel.target_id == target_id,
+                ScanModel.status.in_(("running", "queued", "pending")),
+            )
+            .order_by(ScanModel.id.desc())
+            .limit(1)
+        )
+        if scan is None:
+            return {"scan": None}
+        return {
+            "scan": {
+                "id": scan.id,
+                "profile": scan.profile,
+                "status": scan.status,
+                "source": scan.source,
+                "started_at": scan.started_at.isoformat()
+                if scan.started_at
+                else None,
+            }
+        }
 
 
 @router.get("/targets/{target_id}")
