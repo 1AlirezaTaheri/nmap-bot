@@ -1,7 +1,8 @@
 #!/bin/bash
 # Verify Caddy: HTTPS origin, plain-HTTP origin untouched, tunnel intact.
 set -uo pipefail
-cd /home/alireza/nmap-bot
+DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$DIR/.."
 
 fail=0
 chk() { # chk <label> <expected> <actual>

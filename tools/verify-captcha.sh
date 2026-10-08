@@ -13,7 +13,7 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
-cp tools/verify-captcha.py /tmp/verify_captcha_live.py
+
 
 original="$(grep -o '^CAPTCHA_ENABLED=.*' .env || echo 'CAPTCHA_ENABLED=false')"
 echo "original: $original"
