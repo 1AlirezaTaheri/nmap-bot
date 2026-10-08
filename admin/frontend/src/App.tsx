@@ -13,6 +13,7 @@ import { TelegramUsersPage } from '@/pages/telegram-users'
 import { TargetsPage } from '@/pages/targets'
 import { AuditPage } from '@/pages/audit'
 import { SettingsPage } from '@/pages/settings'
+import { StyleGuidePage } from '@/pages/style-guide'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -84,6 +85,7 @@ function Shell(): JSX.Element {
           <Route path="/targets" element={<TargetsPage />} />
           <Route path="/audit" element={<AuditPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/style-guide" element={<StyleGuidePage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </React.Fragment>

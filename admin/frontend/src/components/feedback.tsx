@@ -7,14 +7,44 @@ import { Button } from './ui'
 /* Skeleton                                                                   */
 /* -------------------------------------------------------------------------- */
 
+const SKELETON_VARIANTS = {
+  /** A bar of text. Default height matches one line of body copy. */
+  line: 'h-4 w-full rounded',
+  /** A round placeholder, for avatars and icon chips. */
+  circle: 'h-9 w-9 rounded-full',
+  /** A whole card, matching Card's padding so it does not jump on load. */
+  card: 'h-24 w-full rounded-lg',
+  /** One table row: block-shaped so columns align with the real cells. */
+  tableRow: 'h-8 w-full rounded',
+} as const
+
+export type SkeletonVariant = keyof typeof SKELETON_VARIANTS
+
+export interface SkeletonProps extends React.HTMLAttributes<HTMLDivElement> {
+  variant?: SkeletonVariant
+}
+
+/**
+ * Loading placeholder.
+ *
+ * A shimmer rather than a pulse: the gradient sweep reads as "content is
+ * arriving" without changing the box's opacity, so a grid of these does not
+ * flicker. The motion is a CSS transform, so it stays on the compositor.
+ */
 export function Skeleton({
   className,
+  variant = 'line',
   ...props
-}: React.HTMLAttributes<HTMLDivElement>): JSX.Element {
+}: SkeletonProps): JSX.Element {
   return (
     <div
+      // Hidden from assistive tech: the surrounding component owns the
+      // loading announcement, so a screen reader should not read N placeholder
+      // divs aloud.
+      aria-hidden
       className={cn(
-        'relative overflow-hidden rounded-md bg-elevated',
+        'relative overflow-hidden bg-elevated',
+        SKELETON_VARIANTS[variant],
         'before:absolute before:inset-0 before:-translate-x-full',
         'before:animate-shimmer before:bg-gradient-to-r',
         'before:from-transparent before:via-border before:to-transparent',
@@ -28,11 +58,11 @@ export function Skeleton({
 /** Placeholder matching the shape of a table body while loading. */
 export function TableSkeleton({ rows = 5, cols = 5 }: { rows?: number; cols?: number }): JSX.Element {
   return (
-    <div className="space-y-2 p-4">
+    <div className="space-y-2 p-4" aria-label="Loading rows">
       {Array.from({ length: rows }).map((_, r) => (
         <div key={r} className="flex gap-3">
           {Array.from({ length: cols }).map((_, c) => (
-            <Skeleton key={c} className={cn('h-8', c === 0 ? 'w-1/4' : 'flex-1')} />
+            <Skeleton key={c} variant="tableRow" className={c === 0 ? 'w-1/4' : 'flex-1'} />
           ))}
         </div>
       ))}
@@ -44,7 +74,7 @@ export function CardSkeleton({ count = 4 }: { count?: number }): JSX.Element {
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {Array.from({ length: count }).map((_, i) => (
-        <Skeleton key={i} className="h-24 rounded-lg" />
+        <Skeleton key={i} variant="card" />
       ))}
     </div>
   )
@@ -58,8 +88,12 @@ export interface EmptyStateProps {
   icon?: LucideIcon
   title: string
   description?: string
+  /** Label for the primary action. Rendered only alongside onAction. */
   actionLabel?: string
   onAction?: () => void
+  /** A secondary action, for "Clear filters" beside "Add target". */
+  secondaryActionLabel?: string
+  onSecondaryAction?: () => void
   className?: string
 }
 
@@ -69,18 +103,32 @@ export function EmptyState({
   description,
   actionLabel,
   onAction,
+  secondaryActionLabel,
+  onSecondaryAction,
   className,
 }: EmptyStateProps): JSX.Element {
   return (
-    <div className={cn('flex flex-col items-center justify-center px-6 py-14 text-center', className)}>
+    <div
+      className={cn(
+        'flex flex-col items-center justify-center px-6 py-14 text-center',
+        className,
+      )}
+    >
       <div className="mb-3 rounded-full bg-elevated p-3">
-        <Icon className="h-6 w-6 text-muted" />
+        <Icon className="h-6 w-6 text-muted" aria-hidden />
       </div>
       <p className="text-sm font-medium text-fg">{title}</p>
-      {description ? <p className="mt-1 max-w-sm text-sm text-muted">{description}</p> : null}
+      {description ? (
+        <p className="mt-1 max-w-sm text-sm text-muted">{description}</p>
+      ) : null}
       {actionLabel && onAction ? (
         <Button className="mt-4" size="sm" onClick={onAction}>
           {actionLabel}
+        </Button>
+      ) : null}
+      {secondaryActionLabel && onSecondaryAction ? (
+        <Button className="mt-2" size="sm" variant="ghost" onClick={onSecondaryAction}>
+          {secondaryActionLabel}
         </Button>
       ) : null}
     </div>

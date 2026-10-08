@@ -33,15 +33,48 @@ export default {
           DEFAULT: 'rgb(var(--info) / <alpha-value>)',
           soft: 'rgb(var(--info-soft) / <alpha-value>)',
         },
+        success: {
+          DEFAULT: 'rgb(var(--success) / <alpha-value>)',
+          soft: 'rgb(var(--success-soft) / <alpha-value>)',
+        },
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
         mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       borderRadius: {
+        xl: '0.75rem',
         lg: '0.5rem',
         md: '0.375rem',
         sm: '0.25rem',
+      },
+      // Named so a shadow can express depth rather than an arbitrary
+      // Tailwind step. Sized and coloured per theme in index.css, because a
+      // shadow that works on an opaque dark surface is wrong on a
+      // translucent light one.
+      boxShadow: {
+        sm: 'var(--shadow-sm)',
+        md: 'var(--shadow-md)',
+        lg: 'var(--shadow-lg)',
+        // For focus rings and the active nav item. Tinted with the theme's
+        // own accent rather than pure black, so it reads as glow.
+        glow: 'var(--shadow-glow)',
+      },
+      // Only durations the app actually uses are declared: Tailwind emits a
+      // utility only if the scanned source references it, so an unreferenced
+      // entry is dead config that reads as coverage but provides none.
+      transitionDuration: {
+        fast: '150ms',
+        normal: '250ms',
+        // Matches the accordion keyframes exactly. Shared with them rather
+        // than reusing `normal`, so a motion change cannot desync the panel
+        // from its animation.
+        accordion: '200ms',
+      },
+      transitionTimingFunction: {
+        standard: 'cubic-bezier(0.2, 0, 0.2, 1)',
+        entrance: 'cubic-bezier(0, 0, 0.2, 1)',
+        exit: 'cubic-bezier(0.4, 0, 1, 1)',
       },
       keyframes: {
         'fade-in': { from: { opacity: '0' }, to: { opacity: '1' } },
@@ -61,6 +94,17 @@ export default {
         shimmer: {
           '100%': { transform: 'translateX(100%)' },
         },
+        // Grid-template-rows disclosure, used by Accordion. Animating a
+        // measured pixel height would need a ref and a ResizeObserver per
+        // panel; 1fr/0fr needs neither and handles a resize for free.
+        'accordion-down': {
+          from: { gridTemplateRows: '0fr' },
+          to: { gridTemplateRows: '1fr' },
+        },
+        'accordion-up': {
+          from: { gridTemplateRows: '1fr' },
+          to: { gridTemplateRows: '0fr' },
+        },
       },
       animation: {
         'fade-in': 'fade-in 150ms ease-out',
@@ -68,6 +112,8 @@ export default {
         'slide-in-right': 'slide-in-right 200ms ease-out',
         shake: 'shake 400ms ease-in-out',
         shimmer: 'shimmer 1.6s infinite',
+        'accordion-down': 'accordion-down 200ms cubic-bezier(0, 0, 0.2, 1)',
+        'accordion-up': 'accordion-up 200ms cubic-bezier(0.4, 0, 1, 1)',
       },
     },
   },
