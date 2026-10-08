@@ -223,6 +223,51 @@ export interface SeriesPoint {
   changes: number
 }
 
+/** A target ranked by how much it changed in a window. */
+export interface TopChangedTarget {
+  id: number
+  name: string
+  value: string
+  changes: number
+  last_change_at: string | null
+}
+
+export interface TopChangedTargets {
+  targets: TopChangedTarget[]
+  days: number
+}
+
+/**
+ * Live counters from the admin process's own scan worker.
+ *
+ * `available` is false when this process runs no worker, which is the normal
+ * case: the bot process owns the queue and runs its own worker instance. Every
+ * counter is null in that state, deliberately -- zeros would read as "idle" and
+ * be wrong.
+ */
+export interface WorkerStatus {
+  available: boolean
+  running: boolean
+  queue_depth: number | null
+  active: number | null
+  pending: number | null
+  max_concurrency: number | null
+}
+
+/**
+ * The scheduler switch.
+ *
+ * `next_run_known` is false and `next_run_at` null: nothing stores a next-run
+ * time, so the dashboard reports the cadence as unknown rather than showing a
+ * number derived from the interval, which would be a guess presented as data.
+ */
+export interface ScheduleStatus {
+  enabled: boolean
+  interval_hours: number | null
+  next_run_at: string | null
+  next_run_known: boolean
+}
+
 export interface Stats {
   targets: number
   scans: number
@@ -424,6 +469,21 @@ export const api = {
 
   targetChanges: (id: number, signal?: AbortSignal) =>
     request<{ changes: ChangeRow[] }>(`/targets/${id}/changes`, signal ? { signal } : {}),
+
+  /** Targets with the most change events in a window, worst first. */
+  topTargets: (days = 7, signal?: AbortSignal) =>
+    request<TopChangedTargets>(
+      `/stats/top-targets?days=${days}`,
+      signal ? { signal } : {},
+    ),
+
+  /** Live worker counters. Does not throw when no worker is present. */
+  workerStatus: (signal?: AbortSignal) =>
+    request<WorkerStatus>('/stats/worker', signal ? { signal } : {}),
+
+  /** The scheduler switch and interval. */
+  scheduleStatus: (signal?: AbortSignal) =>
+    request<ScheduleStatus>('/stats/schedule', signal ? { signal } : {}),
 
   stats: (days = 7, signal?: AbortSignal) =>
     request<Stats>(`/stats?days=${days}`, signal ? { signal } : {}),

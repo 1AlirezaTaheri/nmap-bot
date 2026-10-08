@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
@@ -280,4 +281,114 @@ def operator_chat(session: Session) -> dict | None:
         "user_id": row.user_id,
         "username": row.username,
         "last_seen_at": row.last_seen_at,
+    }
+
+
+def top_changed_targets(session: Session, days: int = 7,
+                        limit: int = 5) -> list[dict]:
+    """Targets with the most change events in a window, worst first.
+
+    ``ChangeEvent`` has no ``target_id``; it reaches a target through its scan.
+    The join is on the scan's own target, which is already indexed via
+    ``Scan.target_id``, so this stays cheap enough to run on a 15s refresh.
+
+    Returns an empty list when nothing changed in the window, which is a normal
+    state rather than an error.
+    """
+    cutoff = _utcnow() - timedelta(days=days)
+    rows = session.execute(
+        select(
+            Target.id,
+            Target.name,
+            Target.value,
+            func.count(ChangeEvent.id).label("changes"),
+            func.max(ChangeEvent.created_at).label("last_change_at"),
+        )
+        .join(Scan, Scan.target_id == Target.id)
+        .join(ChangeEvent, ChangeEvent.scan_id == Scan.id)
+        .where(ChangeEvent.created_at >= cutoff)
+        .group_by(Target.id, Target.name, Target.value)
+        .order_by(func.count(ChangeEvent.id).desc(), Target.name)
+        .limit(limit)
+    ).all()
+    return [
+        {
+            "id": int(target_id),
+            "name": name,
+            "value": value,
+            "changes": int(changes),
+            "last_change_at": last_change_at,
+        }
+        for target_id, name, value, changes, last_change_at in rows
+    ]
+
+
+def schedule_status(store: Any) -> dict:
+    """The scheduler switch and its interval.
+
+    Takes the ``SettingsStore`` rather than opening one: the store is already
+    constructed and loaded on the app context, and there is no module-level
+    singleton to reach for. Building a second one here would mean a second
+    database read on every 15s refresh.
+
+    Deliberately does not synthesise a ``next_run``. There is no stored value
+    for one, and deriving it from the interval would be a guess about the
+    scheduler's actual cadence -- a number on a dashboard that looks precise
+    and is not. It reports what is genuinely known and flags the gap so the UI
+    can say so rather than implying certainty.
+    """
+    # SettingsStore.get() already falls back to the compiled default from
+    # SETTING_SPECS, so no default argument is passed here. Passing one is a
+    # TypeError: get() takes a single positional key.
+    enabled = bool(store.get("schedule_enabled"))
+    interval = store.get("schedule_interval_hours")
+    return {
+        "enabled": enabled,
+        "interval_hours": (
+            int(interval) if isinstance(interval, (int, float)) else None
+        ),
+        "next_run_at": None,
+        "next_run_known": False,
+    }
+
+
+def worker_status(worker: object | None) -> dict:
+    """Live view of the admin process's own scan worker.
+
+    Reads the counters the ScanWorker already keeps. The worker is absent when
+    the admin process did not start one, which is the normal case: scans are
+    queued by the *bot* process, which runs its own worker instance. So this
+    reports the admin's view and says whether it has one, rather than
+    presenting a zero as if it meant "idle".
+
+    Synchronous by design. The underlying counters are guarded by an asyncio
+    lock, but reading an int under the GIL cannot tear, and this handler is
+    sync, so awaiting is not available. The lock protects multi-step
+    invariants, not single reads.
+    """
+    if worker is None:
+        return {
+            "available": False,
+            "running": False,
+            "queue_depth": None,
+            "active": None,
+            "pending": None,
+            "max_concurrency": None,
+        }
+
+    queue = getattr(worker, "_queue", None)
+    jobs = getattr(worker, "_jobs", {})
+    statuses = list(jobs.values()) if isinstance(jobs, dict) else []
+
+    def count(state: str) -> int:
+        return sum(1 for j in statuses if getattr(j, "state", None) == state)
+
+    return {
+        "available": True,
+        "running": bool(getattr(worker, "is_running", False)),
+        # qsize() is the queue's own counter, so no lock is needed for it.
+        "queue_depth": queue.qsize() if queue is not None else None,
+        "active": count("running"),
+        "pending": count("queued") + count("running"),
+        "max_concurrency": getattr(worker, "max_concurrency", None),
     }

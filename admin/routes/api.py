@@ -655,6 +655,71 @@ async def patch_settings(request: Request, body: SettingsPatch,
 
 
 # ---------------------------------------------------------------------------
+# Live dashboard series (Phase 2)
+#
+# New paths only. /api/stats keeps its exact response so nothing existing
+# breaks; the dashboard calls these alongside it.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/stats/top-targets")
+async def stats_top_targets(
+    request: Request,
+    days: int = 7,
+    limit: int = 5,
+    principal=Depends(current_principal),
+):
+    """Targets with the most change events, worst first.
+
+    `days` is clamped for the same reason as in /api/stats: it feeds a date
+    arithmetic subtraction, and an unbounded value would walk far enough back
+    to be a slow query rather than an error.
+    """
+    del principal  # authentication only; this is not per-user
+    days = max(1, min(days, 90))
+    limit = max(1, min(limit, 25))
+    context = ctx(request)
+    with context.database.session() as session:
+        return {
+            "targets": stats_service.top_changed_targets(
+                session, days=days, limit=limit
+            ),
+            "days": days,
+        }
+
+
+@router.get("/stats/worker")
+async def stats_worker(request: Request,
+                       principal=Depends(current_principal)):
+    """Live counters from the admin process's own scan worker.
+
+    Reports `available: false` with null counters when this process runs no
+    worker, which is the normal case -- the bot process owns the queue and runs
+    its own worker instance. Returning zeros there would read as "idle" and be
+    wrong.
+    """
+    del principal  # authentication only
+    context = ctx(request)
+    return stats_service.worker_status(
+        getattr(context, "scan_worker", None)
+    )
+
+
+@router.get("/stats/schedule")
+async def stats_schedule(request: Request,
+                         principal=Depends(current_principal)):
+    """The scheduler switch and its interval.
+
+    `next_run_at` is always null and `next_run_known` false: nothing stores a
+    next-run time, and deriving one from the interval would be a guess dressed
+    as data. The dashboard says so rather than showing a plausible number.
+    """
+    del principal  # authentication only
+    context = ctx(request)
+    return stats_service.schedule_status(context.settings_store)
+
+
+# ---------------------------------------------------------------------------
 # Targets
 # ---------------------------------------------------------------------------
 
